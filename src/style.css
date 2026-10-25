@@ -27,8 +27,12 @@ body {
     font-family: roboto-regular;
 }
 
-#title {
+h1 {
     font-size: 3.5rem;
+}
+
+h2 {
+    font-size: 2.5rem;
 }
 
 #menu {

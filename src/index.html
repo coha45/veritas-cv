@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <!-- https://developer.mozilla.org/en-US/docs/Web/HTTP/CSP -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'"
+    />
+    <meta
+      http-equiv="X-Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'"
+    />
+    <link rel="stylesheet" href="style.css" /> 
+    <title>Veritas CV</title>
+  </head>
+  <body>
+    <h1 id="title">Veritas CV</h1>
+    <div id="menu">
+        <button id="track-btn">Vehicle Tracking</button>  
+        <button id="train-btn">Train</button>  
+    </div>
+    <script src="./renderer.js"></script>
+  </body>
+</html>

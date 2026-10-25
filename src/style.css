@@ -6,6 +6,10 @@
     margin: 0;
 }
 
+:root {
+    --btn-success: rgb(134, 223, 83);
+}
+
 @font-face {
     font-family: roboto-regular;
     src: url("../assets/Roboto-Regular.ttf");
@@ -25,6 +29,29 @@ body {
     justify-content: center;
     align-items: center;
     font-family: roboto-regular;
+    position: relative;
+}
+
+.back-button {
+    position: absolute;
+    top: 5px;
+    left: 5px;   
+    border: none;
+    border-radius: 0;
+    background-color: rgb(245, 74, 74);
+    cursor: pointer;
+    padding: 10px;
+    text-decoration: none;
+}
+
+.back-button::after {
+    position: relative;    
+    top: 0;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    content: "Return";
+    color: white;
 }
 
 h1 {
@@ -41,10 +68,9 @@ h2 {
     gap: 1em;
 }
 
-#menu button {
+#menu button, .form-menu button {
     font-size: 1rem;
     padding: 1em 3em;
-    background-color: cadetblue;
     border: none;
     border-radius: 0;
     cursor: pointer;
@@ -54,6 +80,61 @@ h2 {
     border: none;
 }
 
+#train-btn {
+    background-color: cadetblue;
+}
+
+#track-btn {
+    background-color: rgb(226, 161, 39);
+
+}
+
+#gather-btn {
+    background-color: rgb(134, 223, 83);
+}
+
+
+.form-menu {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    gap: 0.75em;
+}
+
+.form-menu label {
+    display: flex;
+    flex-direction: column;
+}
+
+.form-menu label span {
+    font-size: 0.95rem;
+}
+
+.form-menu input {
+    width: 100%;
+    font-size: 1.2rem;
+    padding: 0.5em 0.75em;
+    border: 1px solid black;
+    border-radius: 0;
+}
+
+.form-menu .select-file {
+    font-size: 1rem;
+    padding: 0.5rem 2em;
+    border: none;    
+    border-radius: 0;
+    cursor: pointer;
+}
+
+#submit-train {
+    background-color: var(--btn-success);    
+}
+
 .active {
     border: 2px solid rgb(134, 236, 32);
+}
+
+.w-full {
+    width: 100%;
 }

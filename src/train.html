@@ -3,10 +3,25 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Train</title>
+    <title>Train Config</title>
     <link rel="stylesheet" href="style.css" />
 </head>
 <body>
-    <h2>Train Options</h2>
+    <a href="index.html" class="back-button"></a>
+    <h2>Train Config</h2>
+    <form id="options" class="form-menu">
+        <button class="select-file w-full" id="model-file-select" name="model-file-select">
+            Model File
+        </button>
+        <button class="select-file w-full" id="model-file-select" name="model-file-select">
+            YAML File
+        </button>
+        <label>
+            <span>Epochs</span>
+            <input type="number" placeholder="Number of Epochs" id="epochs" name="epochs" />
+        </label>
+        <button type="submit" id="submit-train-config">Train</button>
+    </form>
+    <script src="trainRenderer.js"></script>
 </body>
 </html>

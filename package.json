@@ -1,12 +1,14 @@
 {
-  "name": "veritas-cv",
+  "name": "Veritas Computer Vision System",
   "version": "1.0.0",
   "description": "",
   "main": "main.js",
   "scripts": {
     "start": "electron-forge start",
     "package": "electron-forge package",
-    "make": "electron-forge make"
+    "make": "electron-forge make",
+    "pyinstaller" : "",
+    "release" : "npm run package && npm run "
   },
   "keywords": [],
   "author": "",

@@ -4,8 +4,31 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Document</title>
+    <link rel="stylesheet" href="style.css" />
 </head>
 <body>
-    
+    <a href="index.html" class="back-button"></a>
+    <h2>Gather Mode Config</h2>
+    <form class="form-menu" id="gather-options">
+        <button type="button" class="select-file" id="outdir">Output Directory</button>
+        <label class="w-full">
+            <span>Capture Device</span>
+            <select id="capture-device" name="capture-device" class="w-full">
+                <option>0</option>
+                <option>1</option>
+                <option>2</option>
+            </select>
+        </label>
+        <label>
+            <span>Time</span>
+            <input type="number" placeholder="Time To Run Gather (seconds)" id="time" name="time" min="50"/>
+        </label>
+        <label>
+            <span>Interval</span>
+            <input type="number" placeholder="Image Capture Interval" id="interval" name="interval">
+        </label>
+        <button type="submit" id="submit-gather-config">Run</button>
+    </form>
+    <script src="gatherRenderer.js"></script>
 </body>
 </html>

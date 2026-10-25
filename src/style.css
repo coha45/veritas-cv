@@ -119,15 +119,22 @@ h2 {
     border-radius: 0;
 }
 
-.form-menu .select-file {
+.form-menu .select-file, .form-menu label select {
     font-size: 1rem;
     padding: 0.5rem 2em;
     border: none;    
     border-radius: 0;
+}
+
+.form-menu .select-file {
     cursor: pointer;
 }
 
-#submit-train {
+.form-menu label select {
+    background-color: rgb(165, 227, 255);
+}
+
+#submit-train-config, #submit-gather-config {
     background-color: var(--btn-success);    
 }
 

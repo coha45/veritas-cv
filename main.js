@@ -33,6 +33,12 @@ ipc.on("track", (event, arg) => {
     console.log("trakcing")
 })
 
+ipc.handle("gather", async (event, config) => {
+    console.log(config)
+    const { outDir, captureDevice, captureTime, interval } = config
+    spawn("veritascli", ["gather", "-o", outDir, "-cd", captureDevice, "-t", captureTime, "-i", interval])
+})
+
 ipc.handle("dialog:openFile", async () => {
     const result = await dialog.showOpenDialog({
         title : "Select A Folder",

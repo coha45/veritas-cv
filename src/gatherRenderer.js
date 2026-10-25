@@ -13,6 +13,14 @@ outDir.addEventListener("click", _ => {
 
 gatherConfig.onsubmit = e => {
     e.preventDefault()
+    const config = {
+        outDir : outDir.innerText,
+        captureDevice : parseInt(captureDevice.value),
+        captureTime : parseInt(captureTime.value),
+        interval : parseInt(interval.value)
+    }
+    console.log(config)
+    window.electronAPI.onGather(config)
 }
 
 

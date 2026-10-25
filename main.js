@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain : ipc } = require("electron")
+const { app, BrowserWindow, ipcMain : ipc, dialog } = require("electron")
 const { spawn } = require("child_process")
 const path = require("path")
 
@@ -31,4 +31,18 @@ ipc.on("train", (event, arg) => {
 
 ipc.on("track", (event, arg) => {
     console.log("trakcing")
+})
+
+ipc.handle("dialog:openFile", async () => {
+    const result = await dialog.showOpenDialog({
+        title : "Select A Folder",
+        properties : ["openDirectory"]
+    })
+
+    if (result.canceled) {
+        return null
+    } else {
+        console.log(result.filePaths)
+        return result.filePaths
+    }
 })

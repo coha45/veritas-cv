@@ -28,7 +28,8 @@ parser.add_argument("-m", "--model")
 args = parser.parse_args()
 
 if args.mode == "gather":
-    capture_device = args.capture_device
+    print("READY:GATHER", flush=True)
+    capture_device = int(args.capture_device)
     outdir = args.outdir
     interval = int(args.interval)
     time = int(args.time)
@@ -37,6 +38,7 @@ if args.mode == "gather":
     fps = cap.get(cv.CAP_PROP_FPS)
     step = 1
     time_elapsed = 0
+
     while True:
         ret, frame = cap.read()
         cp = np.copy(frame)
@@ -60,8 +62,9 @@ if args.mode == "gather":
     cap.release()
     cv.destroyAllWindows()
 elif args.mode == "train":
-
     model = YOLO(args.model)
+
+
     results = model.train()
 elif args.mode == "run":
     pass

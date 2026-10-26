@@ -2,6 +2,8 @@ const { app, BrowserWindow, ipcMain : ipc, dialog } = require("electron")
 const { spawn } = require("child_process")
 const path = require("path")
 
+let status = "idle"
+
 const createWindow = () => {
     const win = new BrowserWindow({
         width: 800,
@@ -25,18 +27,34 @@ app.on("window-all-closed", () => {
     if (process.platform !== "darwin") app.quit()
 })
 
-ipc.on("train", (event, arg) => {
-    
+ipc.on("train", (event) => {
+        
 })
 
-ipc.on("track", (event, arg) => {
+ipc.on("track", (event) => {
     console.log("trakcing")
 })
 
+ipc.handle("status:get", (event, arg) => {
+    return status
+})
+
 ipc.handle("gather", async (event, config) => {
-    console.log(config)
     const { outDir, captureDevice, captureTime, interval } = config
-    spawn("veritascli", ["gather", "-o", outDir, "-cd", captureDevice, "-t", captureTime, "-i", interval])
+    let progName = null
+    let args = []
+
+    if(app.isPackaged) {
+        progName = "veritascli.exe"
+        args = ["gather", "-o", outDir, "-cd", captureDevice, "-t", captureTime, "-i", interval]
+    } else {
+        progName = "python"
+        args = ["veritascli.py", "gather", "-o", outDir, "-cd", captureDevice, "-t", captureTime, "-i", interval]
+    }
+    const child = spawn(progName, args)
+    child.stdout.on("data", (data) => {
+        status = data.toString().trim()
+    })
 })
 
 ipc.handle("dialog:openFile", async () => {

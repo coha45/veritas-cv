@@ -7,7 +7,7 @@
     "start": "electron-forge start",
     "package": "electron-forge package",
     "make": "electron-forge make",
-    "build:cli" : "pyinstaller --onefile --name veritascli --distpath ./out/veritascv veritas.py",
+    "build:cli" : "pyinstaller --onefile --name veritascli --distpath ./out/veritascv-win32-x64 veritascli.py",
     "release" : "npm run package && npm run build:cli"
   },
   "keywords": [],

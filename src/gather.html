@@ -20,12 +20,12 @@
             </select>
         </label>
         <label>
-            <span>Time</span>
-            <input type="number" placeholder="Time To Run Gather (seconds)" id="time" name="time" min="50"/>
+            <span>Time (seconds)</span>
+            <input type="number" placeholder="Time To Run Gather (seconds)" id="time" name="time" value="30" min="10"/>
         </label>
         <label>
-            <span>Interval</span>
-            <input type="number" placeholder="Image Capture Interval" id="interval" name="interval">
+            <span>Interval (seconds)</span>
+            <input type="number" placeholder="Image Capture Interval" id="interval" name="interval" value="5" min="1">
         </label>
         <button type="submit" id="submit-gather-config">Run</button>
     </form>

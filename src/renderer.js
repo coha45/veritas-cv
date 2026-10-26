@@ -7,6 +7,7 @@ trackBtn.addEventListener("click", _ => {
 })
 
 trainBtn.addEventListener("click", _ => {
+    console.log(window.electronAPI.isPackaged())
     window.location.href = "train.html"
 })
 

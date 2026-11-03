@@ -15,6 +15,14 @@ def get_color(cls_num):
     seed(cls_num)
     return tuple(randint(0,255) for _ in range(3))
 
+def save_img(drawn, frame):
+    rand_key = gen_key() 
+    print(rand_key)
+    cv.imwrite(path.join(outdir, f"image{rand_key}.png"), frame)
+    width = int(cap.get(3))
+    height = int(cap.get(4))
+    return cv.rectangle(drawn, (0, 0), (width, height), (0, 255, 0), 5)
+
 
 parser = argparse.ArgumentParser(
     prog="veritas",
@@ -50,13 +58,11 @@ if args.mode == "gather":
         if not ret: break
 
         drawn = cv.putText(cp, f"Elapsed Time: {floor(time_elapsed)}s\nStep: {step}\n", (30, 30), cv.FONT_HERSHEY_SIMPLEX, 0.75, (0, 255 , 0), 2)
-        if time_elapsed % interval == 0:
-            rand_key = gen_key() 
-            print(rand_key)
-            cv.imwrite(path.join(outdir, f"image{rand_key}.png"), frame)
-            width = int(cap.get(3))
-            height = int(cap.get(4))
-            drawn = cv.rectangle(drawn, (0, 0), (width, height), (0, 255, 0), 5)
+        if interval == 0:
+            if cv.waitKey(20) == 32:
+                drawn = save_img(drawn, frame)
+        elif time_elapsed % interval == 0:
+            drawn = save_img(drawn, frame)
 
         cv.imshow("Gather Mode", drawn)
         if cv.waitKey(20) & 0xFF == ord('d') or time_elapsed > time:

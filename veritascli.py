@@ -1,11 +1,12 @@
 import argparse
 from ultralytics import YOLO
+from ultralytics.solutions import SpeedEstimator
 import cv2 as cv
 import numpy as np
 import os.path as path
 from math import floor
 from random import randint, choice, seed
-import base64
+import PIL
 
 def gen_key():
     ch = "abcdefghijklmnopqrstuvwxyz1234567890"
@@ -36,6 +37,7 @@ parser.add_argument("-t", "--time", default=30)
 parser.add_argument("-cd", "--capture_device", default=0)
 parser.add_argument("-i", "--interval", default=5)
 parser.add_argument("-m", "--model")
+parser.add_argument("-s", "--source")
 
 args = parser.parse_args()
 
@@ -85,13 +87,21 @@ elif args.mode == "run":
     interval = int(args.interval)
     time = int(args.time)
     model_path = args.model
+    source = args.source
 
     cap = cv.VideoCapture(capture_device)
     fps = cap.get(cv.CAP_PROP_FPS)
     step = 1
     time_elapsed = 0
 
-    model = YOLO(model=model_path)    
+    model = YOLO(model=model_path)  
+    speed_obj = SpeedEstimator(
+        show=True,
+        model=model_path,
+        fps=fps,
+        max_hist=5,
+        meter_per_pixel=0.009,
+    ) 
     
     while True:
         ret, frame = cap.read()
@@ -117,12 +127,65 @@ elif args.mode == "run":
                     cv.putText(frame, f"{class_name} {conf:.2f}",
                                 (x1, max(y1 - 10, 20)), cv.FONT_HERSHEY_SIMPLEX,
                                 0.6, colour, 2) 
+
+        frame = speed_obj(frame)
         cv.imshow("Running", frame)
+        cv.imshow("Top View", frame)
 
         if cv.waitKey(20) & 0xFF == ord('d'):
             break
     cap.release()
     cv.destroyAllWindows()
+
+elif args.mode == "calibrate":
+    capture_device = int(args.capture_device)
+    outdir = args.outdir
+
+    points = []
+
+    def add_point(event, x, y, flags, params):
+        if event == cv.EVENT_LBUTTONDOWN:
+            points.append([x, y])
+
+    cap = cv.VideoCapture(capture_device)
+    while True:
+        if len(points) >= 4: break
+        ret, frame = cap.read()
+
+        if not ret: break
+
+        for i, (x, y) in enumerate(points):
+            cv.circle(frame, radius=5, center=(x, y), color=(255, 0, 0), thickness=-1)
+            cv.putText(frame, f"p{i+1}", (x, y), cv.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+
+        cv.imshow("Calibration", frame)
+        cv.setMouseCallback("Calibration", add_point)
+
+        if cv.waitKey(20) & 0xFF == ord('d'):
+            break
+
+    cap.release()
+    cv.destroyAllWindows()
+
+    print(points)
+    points = []
+
+
+    while True:
+        if len(points) >= 4: break
+        top_down = cv.imread("./assets/topdown.png")
+        top_down = cv.resize(top_down, (640, 640))
+
+        for i, (x, y) in enumerate(points): 
+            cv.circle(top_down, center=(x, y), radius=5, thickness=-1, color=(255, 33, 0))
+            cv.putText(top_down, f"p{i+1}", (x, y), cv.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+
+        cv.imshow("Top Down Calibration", top_down)
+        cv.setMouseCallback("Top Down Calibration", add_point)
+
+        cv.waitKey(1)
+    
+    print(points)
 
 else:
     print("Invalid mode value (try: gather, train, run).")

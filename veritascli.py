@@ -29,8 +29,9 @@ def save_img(drawn, frame):
 
 class Zone:
     def __init__(self, p1, p2):
-        self.p1 = p1
-        self.p2 = p2
+        self.p1 = tuple(map(int, p1.tolist()))
+        self.p2 = tuple(map(int, p2.tolist()))
+        print(self.p1)
         self.color = get_color(randint(1, 200))
 
     def point_overlaps(self, point):
@@ -70,7 +71,7 @@ parser.add_argument("-cd", "--capture_device", default=0)
 parser.add_argument("-i", "--interval", default=5)
 parser.add_argument("-m", "--model")
 parser.add_argument("-s", "--source")
-parser.add_argument("-rs", "--road_sections")
+parser.add_argument("-rs", "--road_sections_path")
 
 args = parser.parse_args()
 
@@ -122,7 +123,7 @@ elif args.mode == "run":
     model_path = args.model
     source = args.source
     warp_matrix_path = args.warp_matrix_path
-    road_sections = args.road_sections
+    road_sections = args.road_sections_path
 
 
     cap = cv.VideoCapture(capture_device)
@@ -133,11 +134,12 @@ elif args.mode == "run":
     leanbot_paths = defaultdict(lambda: [])
     violators = defaultdict(lambda: True)
 
-    # Process Zones and Assign Colors
+    # Process Zones
     zones = get_points_from_file(road_sections)
+    print(zones)
     speed_detection_zones = zones["speeding"]
     restricted = zones["restricted"]
-    road_zones = zones.pop("speeding").pop("restricted")
+    road_zones = zones["road"]
     
     model = YOLO(model=model_path)  
     warp_matrix = np.float32(np.load(args.warp_matrix_path))
@@ -150,8 +152,8 @@ elif args.mode == "run":
         top_down = cv.warpPerspective(frame, warp_matrix, (640, 640))
         results = model.track(top_down, stream=True, tracker="bytetrack.yaml")
 
-        for p in road_zones.values():
-            print(p)
+        for name, zone in zip(road_zones.keys(), road_zones.values()):
+            cv.rectangle(top_down, zone.p1, zone.p2, zone.color, 2)
 
         for result in results:
             # Get Ids and convert to list

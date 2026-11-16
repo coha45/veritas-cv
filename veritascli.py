@@ -1,4 +1,5 @@
 import argparse
+import os
 from ultralytics import YOLO
 from ultralytics.solutions import SpeedEstimator
 import cv2 as cv
@@ -8,38 +9,6 @@ from math import floor
 from random import randint, choice, seed
 from collections import defaultdict, deque
 import math
-
-# x-y tuples that need additional functionality/coherency
-class Point:
-    def __init__(self, x, y): 
-        self.x = x
-        self.y = y
-
-    def get_dist(self, p2):
-        return math.sqrt((self.y - p2.y)**2 + (self.x - p2.x)**2) 
-
-class Leanbot: 
-    id_counter = 0
-    leanbots = []
-
-    def __init__(self, x, y):
-        leanbots.append(self)
-        self.id = self.id_counter
-        self.center = Point(x, y)
-        self.license_plate = None
-        self.path = deque([])
-
-        id_counter += 1
-
-    def add_path_point(self, x, y):
-        self.path.append(Point(x, y))
-        self.center = Point(x, y)
-        if len(self.path) > 20:
-            self.path.popleft() 
-
-    def get_dist_from_last(self, pt):
-        last_pt = self.path[-1]
-        return last_pt.get_dist(pt)
 
 def gen_key():
     ch = "abcdefghijklmnopqrstuvwxyz1234567890"
@@ -126,20 +95,15 @@ elif args.mode == "run":
     source = args.source
     warp_matrix_path = args.warp_matrix_path
 
-    cap = cv.VideoCapture(source)
+    cap = cv.VideoCapture(capture_device)
     fps = cap.get(cv.CAP_PROP_FPS)
     step = 1
     time_elapsed = 0
 
     leanbot_paths = defaultdict(lambda: [])
+    violator = defaultdict(lambda: True)
 
     model = YOLO(model=model_path)  
-    speed_obj = SpeedEstimator(
-        model=model_path,
-        fps=fps,
-        max_hist=50,
-        meter_per_pixel=1,
-    ) 
     warp_matrix = np.float32(np.load(args.warp_matrix_path))
 
     while True:
@@ -147,7 +111,7 @@ elif args.mode == "run":
 
         if not ret: break
         top_down = cv.warpPerspective(frame, warp_matrix, (640, 640))
-        results = model.track(top_down, stream=True)
+        results = model.track(top_down, stream=True, tracker="bytetrack.yaml")
 
         for result in results:
             # Get Ids and convert to list
@@ -184,8 +148,6 @@ elif args.mode == "run":
                         points = np.hstack(movement_path).astype(np.int32).reshape(-1, 1, 2) 
                         cv.polylines(top_down, [points], isClosed=False, color=colour, thickness=2)
 
-                    
-        speed_obj_results = speed_obj.process(top_down)
         cv.imshow("Top View", top_down)
 
         if cv.waitKey(20) & 0xFF == ord('d'):
@@ -207,7 +169,7 @@ elif args.mode == "calibrate":
         if event == cv.EVENT_LBUTTONDOWN:
             points.append([x, y])
 
-    cap = cv.VideoCapture(source)
+    cap = cv.VideoCapture(capture_device)
     while True:
         if len(points) >= 4: break
         ret, frame = cap.read()
@@ -251,6 +213,40 @@ elif args.mode == "calibrate":
 
     warp_matrix = cv.getPerspectiveTransform(src, dst)
     np.save(outfile, warp_matrix)
+
+elif args.mode == "divide": 
+    filename = input("New Section Title: ") + ".npy"
+    capture_device = int(args.capture_device)
+    outdir = args.outdir
+    outfile = filename
+    source = args.source
+
+    src = []
+    dst = []
+    points = []
+
+    def add_point(event, x, y, flags, params):
+        if event == cv.EVENT_LBUTTONDOWN:
+            points.append([x, y])
+
+    while True:
+        if len(points) >= 2: break
+        top_down = cv.imread("./assets/topdown.png")
+        top_down = cv.resize(top_down, (640, 640))
+
+        for i, (x, y) in enumerate(points): 
+            cv.circle(top_down, center=(x, y), radius=5, thickness=-1, color=(255, 33, 0))
+            cv.putText(top_down, f"p{i+1}", (x, y), cv.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+
+        cv.imshow("New Section", top_down)
+        cv.setMouseCallback("New Section", add_point)
+
+        cv.waitKey(1)
+
+    new_section = np.float32(points)
+    print("New Section Created:", points)
+
+    np.save(outfile, new_section)
 
 else:
     print("Invalid mode value (try: gather, train, run, calibrate).")

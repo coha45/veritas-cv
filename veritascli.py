@@ -10,6 +10,7 @@ from random import randint, choice, seed
 from collections import defaultdict, deque
 import math
 
+
 def gen_key():
     ch = "abcdefghijklmnopqrstuvwxyz1234567890"
     return "".join([choice(ch) for i in range(randint(10,20))])
@@ -26,6 +27,33 @@ def save_img(drawn, frame):
     height = int(cap.get(4))
     return cv.rectangle(drawn, (0, 0), (width, height), (0, 255, 0), 5)
 
+class Zone:
+    def __init__(self, p1, p2):
+        self.p1 = p1
+        self.p2 = p2
+        self.color = get_color(randint(1, 200))
+
+    def point_overlaps(self, point):
+        return point[0] > self.p1[0] and point[0] < self.p2[0] and point[1] > self.p1[1] and point[1] < self.p2[1]
+
+    def __repr__(self):
+        return f"Zone({self.p1}, {self.p2})"
+
+def get_points_from_file(dir):
+    if not os.path.exists(dir): return None
+
+    dir_items = os.listdir(dir)
+    items = {}
+
+    for item in dir_items:
+        item_path = os.path.join(dir, item)
+        if item.endswith(".npy"): 
+            filename = item.split(".")[0]
+            p1, p2 = np.load(item_path)
+            items[filename] = Zone(p1, p2)
+        elif os.path.exists(os.path.join(dir, item)):
+            items[item] = get_points_from_file(item_path)
+    return items
 
 parser = argparse.ArgumentParser(
     prog="veritas",
@@ -42,7 +70,7 @@ parser.add_argument("-cd", "--capture_device", default=0)
 parser.add_argument("-i", "--interval", default=5)
 parser.add_argument("-m", "--model")
 parser.add_argument("-s", "--source")
-parser.add_argument("-n", "--new-section")
+parser.add_argument("-rs", "--road_sections")
 
 args = parser.parse_args()
 
@@ -94,6 +122,8 @@ elif args.mode == "run":
     model_path = args.model
     source = args.source
     warp_matrix_path = args.warp_matrix_path
+    road_sections = args.road_sections
+
 
     cap = cv.VideoCapture(capture_device)
     fps = cap.get(cv.CAP_PROP_FPS)
@@ -101,10 +131,17 @@ elif args.mode == "run":
     time_elapsed = 0
 
     leanbot_paths = defaultdict(lambda: [])
-    violator = defaultdict(lambda: True)
+    violators = defaultdict(lambda: True)
 
+    # Process Zones and Assign Colors
+    zones = get_points_from_file(road_sections)
+    speed_detection_zones = zones["speeding"]
+    restricted = zones["restricted"]
+    road_zones = zones.pop("speeding").pop("restricted")
+    
     model = YOLO(model=model_path)  
     warp_matrix = np.float32(np.load(args.warp_matrix_path))
+
 
     while True:
         ret, frame = cap.read()
@@ -112,6 +149,9 @@ elif args.mode == "run":
         if not ret: break
         top_down = cv.warpPerspective(frame, warp_matrix, (640, 640))
         results = model.track(top_down, stream=True, tracker="bytetrack.yaml")
+
+        for p in road_zones.values():
+            print(p)
 
         for result in results:
             # Get Ids and convert to list
@@ -156,9 +196,10 @@ elif args.mode == "run":
     cv.destroyAllWindows()
 
 elif args.mode == "calibrate":
+    filename = input("Perspective Warp Name: ") + ".npy"
     capture_device = int(args.capture_device)
     outdir = args.outdir
-    outfile = args.outfile
+    outfile = os.path.join(outdir, filename)
     source = args.source
 
     src = []
@@ -212,13 +253,17 @@ elif args.mode == "calibrate":
     print("Destination Points:", points)
 
     warp_matrix = cv.getPerspectiveTransform(src, dst)
+
+    if not os.path.exists(outdir):
+        os.makedirs(outdir)
+
     np.save(outfile, warp_matrix)
 
 elif args.mode == "divide": 
     filename = input("New Section Title: ") + ".npy"
     capture_device = int(args.capture_device)
     outdir = args.outdir
-    outfile = filename
+    outfile = os.path.join(outdir, filename)
     source = args.source
 
     src = []
@@ -245,6 +290,9 @@ elif args.mode == "divide":
 
     new_section = np.float32(points)
     print("New Section Created:", points)
+
+    if not os.path.exists(outdir):
+        os.makedirs(outdir)
 
     np.save(outfile, new_section)
 

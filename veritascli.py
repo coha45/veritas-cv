@@ -27,6 +27,41 @@ def save_img(drawn, frame):
     height = int(cap.get(4))
     return cv.rectangle(drawn, (0, 0), (width, height), (0, 255, 0), 5)
 
+def get_dist(p1, p2):
+    x1, y1 = p1
+    x2, y2 = p2
+    return math.sqrt((y2 - y1) + (x2 - x1))
+
+class DynamicDefaultDict(defaultdict):
+    def __init__(self, factory):
+        super().__init__(lambda : 0)
+        self.factory = factory
+
+    def __missing__(self, key):
+        value = self.factory()
+        self[key] = value
+        return value
+
+
+class Leanbot:
+    METERS_PER_PIXEL = 0.0019
+
+    def __init__(self, x, y):
+        self.last_current = deque([(x, y)], maxlen=2)
+        self.violator = False
+        self.movement_path = deque(maxlen=50)
+
+    def get_speed_in_meters(self, time_elapsed):
+        if len(self.last_current) < 2: return 0
+        p1, p2 = self.last_current
+        distance = get_dist(p1, p2)
+        return (distance/time_elapsed) * self.METERS_PER_PIXEL
+
+    def update_last(self, x, y): 
+        self.last_current.append((x, y))
+
+
+    
 class Zone:
     def __init__(self, p1, p2):
         self.p1 = tuple(map(int, p1.tolist()))
@@ -125,18 +160,15 @@ elif args.mode == "run":
     warp_matrix_path = args.warp_matrix_path
     road_sections = args.road_sections_path
 
-
     cap = cv.VideoCapture(capture_device)
     fps = cap.get(cv.CAP_PROP_FPS)
     step = 1
     time_elapsed = 0
 
-    leanbot_paths = defaultdict(lambda: [])
-    violators = defaultdict(lambda: True)
+    leanbots = defaultdict(lambda: Leanbot(0 ,0))
 
     # Process Zones
     zones = get_points_from_file(road_sections)
-    print(zones)
     speed_detection_zones = zones["speeding"]
     restricted = zones["restricted"]
     road_zones = zones["road"]
@@ -151,6 +183,8 @@ elif args.mode == "run":
         if not ret: break
         top_down = cv.warpPerspective(frame, warp_matrix, (640, 640))
         results = model.track(top_down, stream=True, tracker="bytetrack.yaml")
+
+        time_elapsed = step/fps
 
         for name, zone in zip(road_zones.keys(), road_zones.values()):
             cv.rectangle(top_down, zone.p1, zone.p2, zone.color, 2)
@@ -180,7 +214,10 @@ elif args.mode == "run":
 
                     # Draw movement path if result object is a leanbot.                    
                     if class_name == "Leanbot":
-                        movement_path = leanbot_paths[id]
+                        cur_leanbot = leanbots[id]
+                        x, y = centroid
+                        cur_leanbot.update_last(x, y)
+                        movement_path = leanbots[id].movement_path
                         movement_path.append(centroid)
 
                         if len(movement_path) > 100:
@@ -194,6 +231,9 @@ elif args.mode == "run":
 
         if cv.waitKey(20) & 0xFF == ord('d'):
             break
+
+        step += 1
+
     cap.release()
     cv.destroyAllWindows()
 

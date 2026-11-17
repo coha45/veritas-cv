@@ -30,7 +30,7 @@ def save_img(drawn, frame):
 def get_dist(p1, p2):
     x1, y1 = p1
     x2, y2 = p2
-    return math.sqrt((y2 - y1) + (x2 - x1))
+    return math.sqrt(abs((y2 - y1) + (x2 - x1)))
 
 class DynamicDefaultDict(defaultdict):
     def __init__(self, factory):
@@ -44,7 +44,7 @@ class DynamicDefaultDict(defaultdict):
 
 
 class Leanbot:
-    METERS_PER_PIXEL = 0.0019
+    METERS_PER_PIXEL = 1
 
     def __init__(self, x, y):
         self.last_current = deque([(x, y)], maxlen=2)
@@ -55,7 +55,8 @@ class Leanbot:
         if len(self.last_current) < 2: return 0
         p1, p2 = self.last_current
         distance = get_dist(p1, p2)
-        return (distance/time_elapsed) * self.METERS_PER_PIXEL
+        print(f"Distance between {p1} and {p2}: {distance}")
+        return (distance/max(1, time_elapsed)) * self.METERS_PER_PIXEL
 
     def update_last(self, x, y): 
         self.last_current.append((x, y))
@@ -160,10 +161,11 @@ elif args.mode == "run":
     warp_matrix_path = args.warp_matrix_path
     road_sections = args.road_sections_path
 
-    cap = cv.VideoCapture(capture_device)
+    cap = cv.VideoCapture(source)
     fps = cap.get(cv.CAP_PROP_FPS)
     step = 1
     time_elapsed = 0
+    speed_update_interval = 1
 
     leanbots = defaultdict(lambda: Leanbot(0 ,0))
 
@@ -184,10 +186,10 @@ elif args.mode == "run":
         top_down = cv.warpPerspective(frame, warp_matrix, (640, 640))
         results = model.track(top_down, stream=True, tracker="bytetrack.yaml")
 
-        time_elapsed = step/fps
+        time_elapsed = step//fps
 
-        for name, zone in zip(road_zones.keys(), road_zones.values()):
-            cv.rectangle(top_down, zone.p1, zone.p2, zone.color, 2)
+        # for name, zone in zip(road_zones.keys(), road_zones.values()):
+        #   cv.rectangle(top_down, zone.p1, zone.p2, zone.color, 2)
 
         for result in results:
             # Get Ids and convert to list
@@ -216,7 +218,8 @@ elif args.mode == "run":
                     if class_name == "Leanbot":
                         cur_leanbot = leanbots[id]
                         x, y = centroid
-                        cur_leanbot.update_last(x, y)
+                        if step % speed_update_interval == 0:
+                            cur_leanbot.update_last(x, y)
                         movement_path = leanbots[id].movement_path
                         movement_path.append(centroid)
 
@@ -226,6 +229,8 @@ elif args.mode == "run":
                         # Draw lines
                         points = np.hstack(movement_path).astype(np.int32).reshape(-1, 1, 2) 
                         cv.polylines(top_down, [points], isClosed=False, color=colour, thickness=2)
+
+                        print(cur_leanbot.get_speed_in_meters(time_elapsed))
 
         cv.imshow("Top View", top_down)
 
@@ -252,7 +257,7 @@ elif args.mode == "calibrate":
         if event == cv.EVENT_LBUTTONDOWN:
             points.append([x, y])
 
-    cap = cv.VideoCapture(capture_device)
+    cap = cv.VideoCapture(source)
     while True:
         if len(points) >= 4: break
         ret, frame = cap.read()

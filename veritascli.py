@@ -130,15 +130,20 @@ if args.mode == "gather":
         if not ret: break
 
         drawn = cv.putText(cp, f"Elapsed Time: {floor(time_elapsed)}s\nStep: {step}\n", (30, 30), cv.FONT_HERSHEY_SIMPLEX, 0.75, (0, 255 , 0), 2)
-        if interval == 0:
-            if cv.waitKey(20) == 32:
+        if interval != 0:
+            if time_elapsed % interval == 0:
                 drawn = save_img(drawn, frame)
-        elif time_elapsed % interval == 0:
-            drawn = save_img(drawn, frame)
 
-        cv.imshow("Gather Mode", drawn)
-        if cv.waitKey(20) & 0xFF == ord('d') or time_elapsed > time:
+        key = cv.waitKey(20) 
+
+        if key & 0xFF == ord('d') or time_elapsed > time:
             break
+        elif key == 32:
+            if interval == 0:
+                drawn = save_img(drawn, frame)
+                    
+        cv.imshow("Gather Mode", drawn)
+        
 
         step +=1
         time_elapsed = step/fps

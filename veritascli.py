@@ -8,7 +8,9 @@ import os.path as path
 from math import floor
 from random import randint, choice, seed
 from collections import defaultdict, deque
-import math
+from collections.abc import MutableMapping
+import math 
+import datetime
 
 
 def gen_key():
@@ -30,7 +32,15 @@ def save_img(drawn, frame):
 def get_dist(p1, p2):
     x1, y1 = p1
     x2, y2 = p2
-    return math.sqrt(abs((y2 - y1) + (x2 - x1)))
+    return math.hypot(x2 - x1, y2 - y1)
+
+def get_angle_in_radians(p1, p2):
+    x1, y1 = p1
+    x2, y2 = p2
+    return math.atan2((y2-y1), (x2-x1))
+
+def get_angle_in_degrees(p1, p2):
+    return math.degrees(get_angle_in_radians(p1, p2))
 
 class DynamicDefaultDict(defaultdict):
     def __init__(self, factory):
@@ -44,37 +54,131 @@ class DynamicDefaultDict(defaultdict):
 
 
 class Leanbot:
-    METERS_PER_PIXEL = 1
+    CM_PER_PIXEL = 0.1905
+    MAX_CM_THRESH = 500.0 # Implausible speed 
+    SPEED_SMOOTHING_FACTOR = 0.05
+    ANGLE_SMOOTHING_FACTOR = 0.05
+    MIN_DIRECTION_DISTANCE = 3.0
 
     def __init__(self, x, y):
-        self.last_current = deque([(x, y)], maxlen=2)
-        self.violator = False
+        self.last_current = deque([(x, y, 0)], maxlen=2)
+        self.violations = set()
         self.movement_path = deque(maxlen=50)
+        self.license_plate = None
+        self.current_zone = None
+        self.time_since_entered = 0
+        self.speed = 0
+        self.angle = 0
+        self.speed_initialized = False
+        self.angle_initialized = False
 
-    def get_speed_in_meters(self, time_elapsed):
-        if len(self.last_current) < 2: return 0
-        p1, p2 = self.last_current
-        distance = get_dist(p1, p2)
-        print(f"Distance between {p1} and {p2}: {distance}")
-        return (distance/max(1, time_elapsed)) * self.METERS_PER_PIXEL
+    def movement_info(self, dx, dy):
+        last, current = self.last_current
+        print(f"Last: {last}, Current: {current}")
+        print(f"dx; {dx}, dy: {y}")
+        print(f"Speed: {self.speed}, Angle: {self.angle}")
 
-    def update_last(self, x, y): 
-        self.last_current.append((x, y))
+    def get_velocity_vector(self):
+        if len(self.last_current) < 2: return (0.0, self.angle)
+
+        x1, y1, timestamp = self.last_current[0]
+        x2, y2, timestamp2 = self.last_current[1]
+
+        dx = x2 - x1
+        dy = y2 - y1
+        distance = math.hypot(dx, dy)
+        self.angle = math.atan2(dy, dx)
+        
+        if distance < 2: return (0.0, self.angle)
+        distance_cm = distance * self.CM_PER_PIXEL
+
+        time_elapsed = timestamp2 - timestamp
+        if time_elapsed <= 0: return (0.0, 0.0)
+
+        raw_speed = distance_cm/time_elapsed
+
+        if raw_speed > self.MAX_CM_THRESH:
+            return (self.speed, self.angle)
+        
+        if not self.speed_initialized:
+            self.speed = raw_speed
+        else:
+            alpha = self.SMOOTHING_FACTOR
+            self.speed = (alpha * raw_speed + (1 - alpha) * self.speed)
+
+        self.movement_info(dx, dy)
+
+        return (self.speed, self.angle)
 
 
-    
+    def get_avg_angle_in_radians(self, hist=25):
+        movement_path = list(self.movement_path)
+
+        if len(movement_path) < 2: 
+            self.angle = None 
+            return None
+
+        points = movement_path[-hist-1:]
+
+        sin_sum = 0.0
+        cos_sum = 0.0
+        count = 0
+
+        for i in range(1, len(points)):
+            x1, y1 = points[i-1]
+            x2, y2 = points[i]
+
+            dx = x2 - x1
+            dy = y2 - y1
+
+            if math.hypot(dx, dy) < self.MIN_DIRECTION_DISTANCE:
+                continue
+
+            angle = math.atan2(dy, dx)
+
+            sin_sum += math.sin(angle)
+            cos_sum += math.cos(angle)
+
+            count += 1
+
+        if count == 0:
+            self.angle = None
+            return self.angle
+
+        raw_angle = math.atan2(sin_sum, cos_sum)
+        if not self.angle_initialized:
+            self.angle = raw_angle
+        else:
+            alpha = self.ANGLE_SMOOTHING_FACTOR
+            self.angle = (alpha * raw_angle + (1 - alpha) * self.angle)
+
+        return self.angle              
+            
+    def update_last(self, x, y, timestamp): 
+        self.last_current.append((x, y, timestamp))
+
+    def get_polylines(self, point):
+        self.movement_path.append(point)
+        return np.hstack(self.movement_path).astype(np.int32).reshape(-1, 1, 2) 
+
+    def add_violation(self, violation_type):
+        self.violations.add(violation_type)
+
+
 class Zone:
-    def __init__(self, p1, p2):
+    def __init__(self, p1, p2, name, zone_type):
         self.p1 = tuple(map(int, p1.tolist()))
         self.p2 = tuple(map(int, p2.tolist()))
-        print(self.p1)
+        self.name = name
+        self.type = zone_type
         self.color = get_color(randint(1, 200))
 
     def point_overlaps(self, point):
         return point[0] > self.p1[0] and point[0] < self.p2[0] and point[1] > self.p1[1] and point[1] < self.p2[1]
-
+    
     def __repr__(self):
-        return f"Zone({self.p1}, {self.p2})"
+        return f"Zone({self.p1}, {self.p2}, {self.name}, {self.type}, {self.color})"
+
 
 def get_points_from_file(dir):
     if not os.path.exists(dir): return None
@@ -86,11 +190,32 @@ def get_points_from_file(dir):
         item_path = os.path.join(dir, item)
         if item.endswith(".npy"): 
             filename = item.split(".")[0]
+            zone_type = os.path.basename(os.path.normpath(dir))
             p1, p2 = np.load(item_path)
-            items[filename] = Zone(p1, p2)
+            items[filename] = Zone(p1, p2, filename, zone_type)
         elif os.path.exists(os.path.join(dir, item)):
             items[item] = get_points_from_file(item_path)
     return items
+
+def flatten_dict(d: MutableMapping, parent_key: str = '', sep: str ='.') -> MutableMapping:
+    items = []
+    for k, v in d.items():
+        new_key = parent_key + sep + k if parent_key else k
+        if isinstance(v, MutableMapping):
+            items.extend(flatten_dict(v, new_key, sep=sep).items())
+        else:
+            items.append((new_key, v))
+    return dict(items)
+
+def draw_direction(frame, angle, x1, y1, length=25, color=(255, 0, 0), thickness=2):
+    print(f"Angle degrees: {angle}")
+
+    x2 = int(x1 + length*math.cos(angle))
+    y2 = int(y1 + length*math.sin(angle))
+
+    cv.arrowedLine(frame, (x1, y1), (x2, y2), color, thickness)
+
+    return frame
 
 parser = argparse.ArgumentParser(
     prog="veritas",
@@ -116,7 +241,7 @@ if args.mode == "gather":
     capture_device = int(args.capture_device)
     outdir = args.outdir
     interval = int(args.interval)
-    time = int(args.time)
+    run_time = int(args.time)
 
     cap = cv.VideoCapture(capture_device)
     fps = cap.get(cv.CAP_PROP_FPS)
@@ -125,10 +250,10 @@ if args.mode == "gather":
 
     while True:
         ret, frame = cap.read()
-        cp = np.copy(frame)
 
         if not ret: break
 
+        cp = np.copy(frame)
         drawn = cv.putText(cp, f"Elapsed Time: {floor(time_elapsed)}s\nStep: {step}\n", (30, 30), cv.FONT_HERSHEY_SIMPLEX, 0.75, (0, 255 , 0), 2)
         if interval != 0:
             if time_elapsed % interval == 0:
@@ -136,7 +261,7 @@ if args.mode == "gather":
 
         key = cv.waitKey(20) 
 
-        if key & 0xFF == ord('d') or time_elapsed > time:
+        if key & 0xFF == ord('d') or time_elapsed > run_time:
             break
         elif key == 32:
             if interval == 0:
@@ -157,6 +282,7 @@ elif args.mode == "train":
     results = model.train()
 elif args.mode == "run":
     print("READY:RUN", flush=True)
+    UPDATE_INTERVAL = 15
     capture_device = int(args.capture_device)
     outdir = args.outdir
     interval = int(args.interval)
@@ -166,35 +292,34 @@ elif args.mode == "run":
     warp_matrix_path = args.warp_matrix_path
     road_sections = args.road_sections_path
 
-    cap = cv.VideoCapture(source)
+    cap = cv.VideoCapture(capture_device)
     fps = cap.get(cv.CAP_PROP_FPS)
-    step = 1
     time_elapsed = 0
-    speed_update_interval = 1
+    step = 0
 
     leanbots = defaultdict(lambda: Leanbot(0 ,0))
 
     # Process Zones
     zones = get_points_from_file(road_sections)
-    speed_detection_zones = zones["speeding"]
-    restricted = zones["restricted"]
-    road_zones = zones["road"]
     
-    model = YOLO(model=model_path)  
-    warp_matrix = np.float32(np.load(args.warp_matrix_path))
-
+    model = YOLO(model=model_path) 
+    if warp_matrix_path is not None: 
+        warp_matrix = np.float32(np.load(args.warp_matrix_path))
+    else:
+        warp_matrix = None
 
     while True:
         ret, frame = cap.read()
 
         if not ret: break
-        top_down = cv.warpPerspective(frame, warp_matrix, (640, 640))
-        results = model.track(top_down, stream=True, tracker="bytetrack.yaml")
 
-        time_elapsed = step//fps
+        time_elapsed = step/fps
 
-        # for name, zone in zip(road_zones.keys(), road_zones.values()):
-        #   cv.rectangle(top_down, zone.p1, zone.p2, zone.color, 2)
+        if warp_matrix is None:
+            top_down = frame
+        else:
+            top_down = cv.warpPerspective(frame, warp_matrix, (640, 640))
+        results = model.track(top_down, stream=True, persist=True, tracker="bytetrack.yaml")
 
         for result in results:
             # Get Ids and convert to list
@@ -202,7 +327,7 @@ elif args.mode == "run":
             ids = result.boxes.id.cpu().tolist()
             class_names = result.names
             for box, id in zip(result.boxes, ids):
-                if box.conf[0] > 0.6:
+                if box.conf[0] > 0.4:
                     x1, y1, x2, y2 = map(int, box.xyxy[0])
                     centroid = (x1 + ((x2 - x1)//2)), (y1 + ((y2 - y1)// 2))
 
@@ -212,7 +337,10 @@ elif args.mode == "run":
                     conf = float(box.conf[0])
 
                     colour = get_color(cls)
-
+                    if class_name == "Leanbot":
+                        if len(leanbots[id].violations) >= 1:
+                            colour = (0, 0, 255)
+                        
                     cv.rectangle(top_down, (x1, y1), (x2, y2), colour, 2)
 
                     cv.putText(top_down, f"{class_name} {conf:.2f}",
@@ -223,19 +351,44 @@ elif args.mode == "run":
                     if class_name == "Leanbot":
                         cur_leanbot = leanbots[id]
                         x, y = centroid
-                        if step % speed_update_interval == 0:
-                            cur_leanbot.update_last(x, y)
-                        movement_path = leanbots[id].movement_path
-                        movement_path.append(centroid)
 
-                        if len(movement_path) > 100:
-                            movement_path.pop(0) 
-                        
+                        # Update Space-Time
+                        if step % UPDATE_INTERVAL == 0:
+                            cur_leanbot.update_last(x, y, time_elapsed)
+
+                        # Path
+                        speed, _ = cur_leanbot.get_velocity_vector()
+                        angle = cur_leanbot.get_avg_angle_in_radians()
+                        print(f"Speed: {speed}")
+
+
                         # Draw lines
-                        points = np.hstack(movement_path).astype(np.int32).reshape(-1, 1, 2) 
+                        points = cur_leanbot.get_polylines(centroid) 
                         cv.polylines(top_down, [points], isClosed=False, color=colour, thickness=2)
 
-                        print(cur_leanbot.get_speed_in_meters(time_elapsed))
+
+                        if angle is not None:
+                            top_down = draw_direction(top_down, angle, x, y)
+                            cv.putText(top_down, f"Angle: {angle:0.2f}", (x1, max(y - 35, 70)),
+                                   cv.FONT_HERSHEY_SIMPLEX, 0.6, colour, 2)
+
+                        cv.putText(top_down, f"Speed: {speed:0.2f}cm/s", (x1, max(y1 - 25, 50)),
+                                   cv.FONT_HERSHEY_SIMPLEX, 0.6, colour, 2)
+
+                        print(cur_leanbot.violations)
+                        
+                        if speed > 40:
+                            cur_leanbot.add_violation("Speeding")
+                    
+                        for zone in flatten_dict(zones).values():
+                            if zone.point_overlaps(centroid):
+                                cur_leanbot.current_zone = zone
+                        if cur_leanbot.current_zone is not None:
+                            if cur_leanbot.current_zone.type == "restricted":
+                                print(f"In zone {cur_leanbot.current_zone.name}")
+
+        for zone in list(flatten_dict(zones).values()):
+            cv.rectangle(top_down, zone.p1, zone.p2, zone.color, 2)
 
         cv.imshow("Top View", top_down)
 
@@ -262,7 +415,7 @@ elif args.mode == "calibrate":
         if event == cv.EVENT_LBUTTONDOWN:
             points.append([x, y])
 
-    cap = cv.VideoCapture(source)
+    cap = cv.VideoCapture(capture_device)
     while True:
         if len(points) >= 4: break
         ret, frame = cap.read()

@@ -1,0 +1,236 @@
+[
+    {
+        "p1": [
+            239,
+            350
+        ],
+        "p2": [
+            397,
+            504
+        ],
+        "name": "main_intersection",
+        "type": "INTERSECTION",
+        "color": [
+            153,
+            102,
+            204
+        ],
+        "zone_direction": null
+    },
+    {
+        "p1": [
+            240,
+            128
+        ],
+        "p2": [
+            395,
+            193
+        ],
+        "name": "pedestrian_lane",
+        "type": "PEDESTRIAN_LANE",
+        "color": [
+            0,
+            127,
+            255
+        ],
+        "zone_direction": null
+    },
+    {
+        "p1": [
+            242,
+            0
+        ],
+        "p2": [
+            318,
+            126
+        ],
+        "name": "back_right_lane",
+        "type": "RIGHT_LANE",
+        "color": [
+            0,
+            255,
+            255
+        ],
+        "zone_direction": -90
+    },
+    {
+        "p1": [
+            321,
+            1
+        ],
+        "p2": [
+            395,
+            127
+        ],
+        "name": "back_left_lane",
+        "type": "LEFT_LANE",
+        "color": [
+            255,
+            191,
+            0
+        ],
+        "zone_direction": 90
+    },
+    {
+        "p1": [
+            241,
+            195
+        ],
+        "p2": [
+            318,
+            347
+        ],
+        "name": "middle_right_lane",
+        "type": "RIGHT_LANE",
+        "color": [
+            0,
+            255,
+            255
+        ],
+        "zone_direction": -90
+    },
+    {
+        "p1": [
+            320,
+            196
+        ],
+        "p2": [
+            395,
+            347
+        ],
+        "name": "middle_left_lane",
+        "type": "LEFT_LANE",
+        "color": [
+            255,
+            191,
+            0
+        ],
+        "zone_direction": 90
+    },
+    {
+        "p1": [
+            0,
+            349
+        ],
+        "p2": [
+            238,
+            428
+        ],
+        "name": "left_left_lane",
+        "type": "LEFT_LANE",
+        "color": [
+            255,
+            191,
+            0
+        ],
+        "zone_direction": null
+    },
+    {
+        "p1": [
+            1,
+            429
+        ],
+        "p2": [
+            237,
+            506
+        ],
+        "name": "left_right_lane",
+        "type": "RIGHT_LANE",
+        "color": [
+            0,
+            255,
+            255
+        ],
+        "zone_direction": null
+    },
+    {
+        "p1": [
+            398,
+            351
+        ],
+        "p2": [
+            638,
+            428
+        ],
+        "name": "right_left_lane",
+        "type": "LEFT_LANE",
+        "color": [
+            255,
+            191,
+            0
+        ],
+        "zone_direction": null
+    },
+    {
+        "p1": [
+            400,
+            430
+        ],
+        "p2": [
+            638,
+            503
+        ],
+        "name": "right_right_lane",
+        "type": "RIGHT_LANE",
+        "color": [
+            0,
+            255,
+            255
+        ],
+        "zone_direction": null
+    },
+    {
+        "p1": [
+            1,
+            0
+        ],
+        "p2": [
+            239,
+            348
+        ],
+        "name": "restricted_left",
+        "type": "RESTRICTED",
+        "color": [
+            255,
+            32,
+            82
+        ],
+        "zone_direction": null
+    },
+    {
+        "p1": [
+            398,
+            0
+        ],
+        "p2": [
+            638,
+            350
+        ],
+        "name": "restricted_right",
+        "type": "RESTRICTED",
+        "color": [
+            255,
+            32,
+            82
+        ],
+        "zone_direction": null
+    },
+    {
+        "p1": [
+            0,
+            508
+        ],
+        "p2": [
+            638,
+            639
+        ],
+        "name": "restricted_bottom",
+        "type": "RESTRICTED",
+        "color": [
+            255,
+            32,
+            82
+        ],
+        "zone_direction": null
+    }
+]

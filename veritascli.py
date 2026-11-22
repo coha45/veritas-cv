@@ -10,7 +10,9 @@ from random import randint, choice, seed
 from collections import defaultdict, deque
 from collections.abc import MutableMapping
 import math 
-import datetime
+import pyautogui 
+from enum import Enum, auto
+import json
 
 
 def gen_key():
@@ -39,18 +41,28 @@ def get_angle_in_radians(p1, p2):
     x2, y2 = p2
     return math.atan2((y2-y1), (x2-x1))
 
+def flatten_dict(d: MutableMapping, parent_key: str = '', sep: str ='.') -> MutableMapping:
+    items = []
+    for k, v in d.items():
+        new_key = parent_key + sep + k if parent_key else k
+        if isinstance(v, MutableMapping):
+            items.extend(flatten_dict(v, new_key, sep=sep).items())
+        else:
+            items.append((new_key, v))
+    return dict(items)
+
+def draw_direction(frame, angle, x1, y1, length=25, color=(255, 0, 0), thickness=2):
+    print(f"Angle degrees: {angle}")
+
+    x2 = int(x1 + length*math.cos(angle))
+    y2 = int(y1 + length*math.sin(angle))
+
+    cv.arrowedLine(frame, (x1, y1), (x2, y2), color, thickness)
+
+    return frame
+
 def get_angle_in_degrees(p1, p2):
     return math.degrees(get_angle_in_radians(p1, p2))
-
-class DynamicDefaultDict(defaultdict):
-    def __init__(self, factory):
-        super().__init__(lambda : 0)
-        self.factory = factory
-
-    def __missing__(self, key):
-        value = self.factory()
-        self[key] = value
-        return value
 
 
 class Leanbot:
@@ -164,14 +176,21 @@ class Leanbot:
     def add_violation(self, violation_type):
         self.violations.add(violation_type)
 
+class ZoneType(Enum):
+    LEFT_LANE = auto()
+    RIGHT_LANE = auto()
+    PEDESTRIAN_LANE = auto()
+    INTERSECTION = auto()
+    RESTRICTED = auto()
 
 class Zone:
-    def __init__(self, p1, p2, name, zone_type):
-        self.p1 = tuple(map(int, p1.tolist()))
-        self.p2 = tuple(map(int, p2.tolist()))
+    def __init__(self, p1, p2, name, zone_type, zone_direction=None):
+        self.p1 = p1
+        self.p2 = p2
         self.name = name
         self.type = zone_type
-        self.color = get_color(randint(1, 200))
+        self.color = self.get_color_from_zone(zone_type)
+        self.zone_direction = zone_direction
 
     def point_overlaps(self, point):
         return point[0] > self.p1[0] and point[0] < self.p2[0] and point[1] > self.p1[1] and point[1] < self.p2[1]
@@ -179,43 +198,44 @@ class Zone:
     def __repr__(self):
         return f"Zone({self.p1}, {self.p2}, {self.name}, {self.type}, {self.color})"
 
+    def to_dict(self):
+        return {
+            "p1" : self.p1,
+            "p2" : self.p2,
+            "name" : self.name,
+            "type" : self.type.name,
+            "color" : self.color,
+            "zone_direction" : self.zone_direction if self.zone_direction else None
+        }
+    
+    @staticmethod
+    def from_dict(self, zone_dict):
+        return Zone(
+            tuple(zone_dict.p1),
+            tuple(zone_dict.p2),
+            zone_dict.name,
+            ZoneType(zone_dict.type),
+            zone_dict.zone_direction
+        )
 
-def get_points_from_file(dir):
-    if not os.path.exists(dir): return None
+    @staticmethod
+    def load_zones(self, src):
+        with open(src, "r", encoding="utf-8") as file:
+            data = json.load(file)
+        return [Zone.from_dict(zone) for zone in data]
 
-    dir_items = os.listdir(dir)
-    items = {}
-
-    for item in dir_items:
-        item_path = os.path.join(dir, item)
-        if item.endswith(".npy"): 
-            filename = item.split(".")[0]
-            zone_type = os.path.basename(os.path.normpath(dir))
-            p1, p2 = np.load(item_path)
-            items[filename] = Zone(p1, p2, filename, zone_type)
-        elif os.path.exists(os.path.join(dir, item)):
-            items[item] = get_points_from_file(item_path)
-    return items
-
-def flatten_dict(d: MutableMapping, parent_key: str = '', sep: str ='.') -> MutableMapping:
-    items = []
-    for k, v in d.items():
-        new_key = parent_key + sep + k if parent_key else k
-        if isinstance(v, MutableMapping):
-            items.extend(flatten_dict(v, new_key, sep=sep).items())
-        else:
-            items.append((new_key, v))
-    return dict(items)
-
-def draw_direction(frame, angle, x1, y1, length=25, color=(255, 0, 0), thickness=2):
-    print(f"Angle degrees: {angle}")
-
-    x2 = int(x1 + length*math.cos(angle))
-    y2 = int(y1 + length*math.sin(angle))
-
-    cv.arrowedLine(frame, (x1, y1), (x2, y2), color, thickness)
-
-    return frame
+    def get_color_from_zone(self, zone):
+        match zone:
+            case ZoneType.LEFT_LANE:
+                return (255, 191, 0)
+            case ZoneType.RIGHT_LANE:
+                return (0, 255, 255)
+            case ZoneType.PEDESTRIAN_LANE:
+                return (0, 127, 255)
+            case ZoneType.INTERSECTION:
+                return (153, 102, 204)
+            case ZoneType.RESTRICTED:
+                return (255, 32, 82)
 
 parser = argparse.ArgumentParser(
     prog="veritas",
@@ -300,7 +320,7 @@ elif args.mode == "run":
     leanbots = defaultdict(lambda: Leanbot(0 ,0))
 
     # Process Zones
-    zones = get_points_from_file(road_sections)
+    zones = Zone.load_zones(road_sections)
     
     model = YOLO(model=model_path) 
     if warp_matrix_path is not None: 
@@ -465,41 +485,114 @@ elif args.mode == "calibrate":
     np.save(outfile, warp_matrix)
 
 elif args.mode == "divide": 
-    filename = input("New Section Title: ") + ".npy"
-    capture_device = int(args.capture_device)
+    filename = pyautogui.prompt("Filename") 
+    filename = "output.json" if filename is None else filename+".json"
     outdir = args.outdir
     outfile = os.path.join(outdir, filename)
     source = args.source
 
-    src = []
-    dst = []
-    points = []
+    recs = []
 
-    def add_point(event, x, y, flags, params):
+    current_point = None
+    mouse_pos = None
+
+    def prompt_zone_direction():
+        while True:
+            zone_direction = pyautogui.prompt("Zone Direction in Degrees")
+            if zone_direction is None: return None
+
+            try:
+                l = int(zone_direction)
+            except:
+                continue
+
+            return l
+
+    def handle_point(event, x, y, flags, params):
+        global current_point
+        global mouse_pos
+
         if event == cv.EVENT_LBUTTONDOWN:
-            points.append([x, y])
+            if current_point is None:
+                current_point = (x, y)
+            else:
+                rectangle_pts = (current_point, (x, y))
+
+                zone_direction = None
+                zone_name = pyautogui.prompt("Name of created zone:")  
+                if zone_name is None or zone_name in [z.name for z in recs]:
+                    current_point = None  
+                    return
+                zone_name = zone_name.strip()
+
+                zone_type = pyautogui.confirm(
+                    "Select a Zone type: ", 
+                    buttons=[zone.name for zone in ZoneType]
+                ) 
+                if zone_type is None: 
+                    current_point = None
+                    return
+
+                zone_type = ZoneType[zone_type]
+                if zone_type == ZoneType.LEFT_LANE or zone_type == ZoneType.RIGHT_LANE: 
+                    zone_direction = prompt_zone_direction()
+                    if zone_direction is None: # Returns None as a result of cancellation
+                        current_point = None
+                        return
+
+
+                print(f"Zone Name: {zone_name}")
+                print(f"Zone Type: {zone_type}")
+
+                if zone_direction is not None:
+                    print(f"Zone Direction: {zone_direction}")
+
+                zone = Zone(rectangle_pts[0], rectangle_pts[1], zone_name, zone_type, zone_direction)
+
+                recs.append(zone)
+                current_point = None
+             
+        if event == cv.EVENT_MOUSEMOVE:
+            if current_point is not None: 
+                mouse_pos = (x, y)
+            else:
+                mouse_pos = None
 
     while True:
-        if len(points) >= 2: break
-        top_down = cv.imread("./assets/topdown.png")
-        top_down = cv.resize(top_down, (640, 640))
+        top_down = cv.imread("./assets/topdown.png")      
+        top_down = cv.resize(top_down, (640, 640))     
 
-        for i, (x, y) in enumerate(points): 
-            cv.circle(top_down, center=(x, y), radius=5, thickness=-1, color=(255, 33, 0))
-            cv.putText(top_down, f"p{i+1}", (x, y), cv.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+        for zone in recs:
+            p1 = zone.p1
+            p2 = zone.p2
+            color = zone.color
+            x1, y1 = p1
+            x2, y2 = p2
+            cv.rectangle(top_down, p1, p2, color, thickness=2)
 
-        cv.imshow("New Section", top_down)
-        cv.setMouseCallback("New Section", add_point)
+            (text_width, text_height), baseline = cv.getTextSize(zone.name, cv.FONT_HERSHEY_COMPLEX, 0.5, 1)
+            x = x1 + (((x2 - x1) - text_width) // 2)
+            y = y1 + (((y2 - y1) + text_height) // 2)
+            centroid = (x, y)
 
-        cv.waitKey(1)
+            cv.putText(top_down, zone.name, centroid, cv.FONT_HERSHEY_COMPLEX, 0.5, (color))
 
-    new_section = np.float32(points)
-    print("New Section Created:", points)
+        if current_point is not None and mouse_pos is not None:
+            clr_seed = mouse_pos[0]
+            cv.rectangle(top_down, current_point, mouse_pos, get_color(clr_seed), thickness=2)
+
+        cv.imshow("Road Sections", top_down)
+        cv.setMouseCallback("Road Sections", handle_point)
+
+        if cv.waitKey(20) & 0xFF == ord('d'):
+            break
+
+    recs = [zone.to_dict() for zone in recs]
 
     if not os.path.exists(outdir):
         os.makedirs(outdir)
 
-    np.save(outfile, new_section)
-
+    with open(outfile, "w") as file:
+        json.dump(recs, file, indent=4)
 else:
     print("Invalid mode value (try: gather, train, run, calibrate).")

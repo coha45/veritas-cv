@@ -1,7 +1,6 @@
 import argparse
 import os
 from ultralytics import YOLO
-from ultralytics.solutions import SpeedEstimator
 import cv2 as cv
 import numpy as np
 import os.path as path
@@ -11,9 +10,12 @@ from collections import defaultdict, deque
 from collections.abc import MutableMapping
 import math 
 import pyautogui 
-from enum import Enum, auto
 import json
+import zmq
 
+from Leanbot import Leanbot
+from Zone import Zone
+from Enums import ZoneType, TrafficState
 
 def gen_key():
     ch = "abcdefghijklmnopqrstuvwxyz1234567890"
@@ -52,8 +54,6 @@ def flatten_dict(d: MutableMapping, parent_key: str = '', sep: str ='.') -> Muta
     return dict(items)
 
 def draw_direction(frame, angle, x1, y1, length=25, color=(255, 0, 0), thickness=2):
-    print(f"Angle degrees: {angle}")
-
     x2 = int(x1 + length*math.cos(angle))
     y2 = int(y1 + length*math.sin(angle))
 
@@ -64,178 +64,19 @@ def draw_direction(frame, angle, x1, y1, length=25, color=(255, 0, 0), thickness
 def get_angle_in_degrees(p1, p2):
     return math.degrees(get_angle_in_radians(p1, p2))
 
+def draw_center_text(frame, p1, p2, text, font, scale, thickness, color):
+    x1, y1 = p1
+    x2, y2 = p2
+    cv.rectangle(top_down, p1, p2, color, thickness=2)
 
-class Leanbot:
-    CM_PER_PIXEL = 0.1905
-    MAX_CM_THRESH = 500.0 # Implausible speed 
-    SPEED_SMOOTHING_FACTOR = 0.05
-    ANGLE_SMOOTHING_FACTOR = 0.05
-    MIN_DIRECTION_DISTANCE = 3.0
+    (text_width, text_height), baseline = cv.getTextSize(text, font, scale, thickness)
+    x = x1 + (((x2 - x1) - text_width) // 2)
+    y = y1 + (((y2 - y1) + text_height) // 2)
+    centroid = (x, y)
 
-    def __init__(self, x, y):
-        self.last_current = deque([(x, y, 0)], maxlen=2)
-        self.violations = set()
-        self.movement_path = deque(maxlen=50)
-        self.license_plate = None
-        self.current_zone = None
-        self.time_since_entered = 0
-        self.speed = 0
-        self.angle = 0
-        self.speed_initialized = False
-        self.angle_initialized = False
+    cv.putText(frame, text, centroid, font, scale, color, 1)
 
-    def movement_info(self, dx, dy):
-        last, current = self.last_current
-        print(f"Last: {last}, Current: {current}")
-        print(f"dx; {dx}, dy: {y}")
-        print(f"Speed: {self.speed}, Angle: {self.angle}")
-
-    def get_velocity_vector(self):
-        if len(self.last_current) < 2: return (0.0, self.angle)
-
-        x1, y1, timestamp = self.last_current[0]
-        x2, y2, timestamp2 = self.last_current[1]
-
-        dx = x2 - x1
-        dy = y2 - y1
-        distance = math.hypot(dx, dy)
-        self.angle = math.atan2(dy, dx)
-        
-        if distance < 2: return (0.0, self.angle)
-        distance_cm = distance * self.CM_PER_PIXEL
-
-        time_elapsed = timestamp2 - timestamp
-        if time_elapsed <= 0: return (0.0, 0.0)
-
-        raw_speed = distance_cm/time_elapsed
-
-        if raw_speed > self.MAX_CM_THRESH:
-            return (self.speed, self.angle)
-        
-        if not self.speed_initialized:
-            self.speed = raw_speed
-        else:
-            alpha = self.SMOOTHING_FACTOR
-            self.speed = (alpha * raw_speed + (1 - alpha) * self.speed)
-
-        self.movement_info(dx, dy)
-
-        return (self.speed, self.angle)
-
-
-    def get_avg_angle_in_radians(self, hist=25):
-        movement_path = list(self.movement_path)
-
-        if len(movement_path) < 2: 
-            self.angle = None 
-            return None
-
-        points = movement_path[-hist-1:]
-
-        sin_sum = 0.0
-        cos_sum = 0.0
-        count = 0
-
-        for i in range(1, len(points)):
-            x1, y1 = points[i-1]
-            x2, y2 = points[i]
-
-            dx = x2 - x1
-            dy = y2 - y1
-
-            if math.hypot(dx, dy) < self.MIN_DIRECTION_DISTANCE:
-                continue
-
-            angle = math.atan2(dy, dx)
-
-            sin_sum += math.sin(angle)
-            cos_sum += math.cos(angle)
-
-            count += 1
-
-        if count == 0:
-            self.angle = None
-            return self.angle
-
-        raw_angle = math.atan2(sin_sum, cos_sum)
-        if not self.angle_initialized:
-            self.angle = raw_angle
-        else:
-            alpha = self.ANGLE_SMOOTHING_FACTOR
-            self.angle = (alpha * raw_angle + (1 - alpha) * self.angle)
-
-        return self.angle              
-            
-    def update_last(self, x, y, timestamp): 
-        self.last_current.append((x, y, timestamp))
-
-    def get_polylines(self, point):
-        self.movement_path.append(point)
-        return np.hstack(self.movement_path).astype(np.int32).reshape(-1, 1, 2) 
-
-    def add_violation(self, violation_type):
-        self.violations.add(violation_type)
-
-class ZoneType(Enum):
-    LEFT_LANE = auto()
-    RIGHT_LANE = auto()
-    PEDESTRIAN_LANE = auto()
-    INTERSECTION = auto()
-    RESTRICTED = auto()
-
-class Zone:
-    def __init__(self, p1, p2, name, zone_type, zone_direction=None):
-        self.p1 = p1
-        self.p2 = p2
-        self.name = name
-        self.type = zone_type
-        self.color = self.get_color_from_zone(zone_type)
-        self.zone_direction = zone_direction
-
-    def point_overlaps(self, point):
-        return point[0] > self.p1[0] and point[0] < self.p2[0] and point[1] > self.p1[1] and point[1] < self.p2[1]
-    
-    def __repr__(self):
-        return f"Zone({self.p1}, {self.p2}, {self.name}, {self.type}, {self.color})"
-
-    def to_dict(self):
-        return {
-            "p1" : self.p1,
-            "p2" : self.p2,
-            "name" : self.name,
-            "type" : self.type.name,
-            "color" : self.color,
-            "zone_direction" : self.zone_direction if self.zone_direction else None
-        }
-    
-    @staticmethod
-    def from_dict(self, zone_dict):
-        return Zone(
-            tuple(zone_dict.p1),
-            tuple(zone_dict.p2),
-            zone_dict.name,
-            ZoneType(zone_dict.type),
-            zone_dict.zone_direction
-        )
-
-    @staticmethod
-    def load_zones(self, src):
-        with open(src, "r", encoding="utf-8") as file:
-            data = json.load(file)
-        return [Zone.from_dict(zone) for zone in data]
-
-    def get_color_from_zone(self, zone):
-        match zone:
-            case ZoneType.LEFT_LANE:
-                return (255, 191, 0)
-            case ZoneType.RIGHT_LANE:
-                return (0, 255, 255)
-            case ZoneType.PEDESTRIAN_LANE:
-                return (0, 127, 255)
-            case ZoneType.INTERSECTION:
-                return (153, 102, 204)
-            case ZoneType.RESTRICTED:
-                return (255, 32, 82)
+    return frame
 
 parser = argparse.ArgumentParser(
     prog="veritas",
@@ -311,6 +152,7 @@ elif args.mode == "run":
     source = args.source
     warp_matrix_path = args.warp_matrix_path
     road_sections = args.road_sections_path
+    identity = "client_a"
 
     cap = cv.VideoCapture(capture_device)
     fps = cap.get(cv.CAP_PROP_FPS)
@@ -318,6 +160,13 @@ elif args.mode == "run":
     step = 0
 
     leanbots = defaultdict(lambda: Leanbot(0 ,0))
+
+    # Server Communication
+    context = zmq.Context()
+    socket = context.socket(zmq.DEALER)
+    socket.setsockopt(zmq.IDENTITY, identity.encode())
+    socket.connect("tcp://127.0.0.1:5555")
+    socket.send_json({"test" : "hello"})
 
     # Process Zones
     zones = Zone.load_zones(road_sections)
@@ -339,7 +188,7 @@ elif args.mode == "run":
             top_down = frame
         else:
             top_down = cv.warpPerspective(frame, warp_matrix, (640, 640))
-        results = model.track(top_down, stream=True, persist=True, tracker="bytetrack.yaml")
+        results = model.track(top_down, verbose=False, stream=True, persist=True, tracker="bytetrack.yaml")
 
         for result in results:
             # Get Ids and convert to list
@@ -400,16 +249,22 @@ elif args.mode == "run":
                         if speed > 40:
                             cur_leanbot.add_violation("Speeding")
                     
-                        for zone in flatten_dict(zones).values():
-                            if zone.point_overlaps(centroid):
-                                cur_leanbot.current_zone = zone
-                        if cur_leanbot.current_zone is not None:
-                            if cur_leanbot.current_zone.type == "restricted":
-                                print(f"In zone {cur_leanbot.current_zone.name}")
+        for zone in zones:
+            p1 = zone.p1
+            p2 = zone.p2
+            x1, y1 = p1
+            x2, y2 = p2
+            angle = zone.zone_direction
+            x, y = (x1 + ((x2 - x1)//2), y1 + ((y2 - y1)//2))
+            color = zone.color
+            top_down = draw_center_text(top_down, p1, p2, zone.name, cv.FONT_HERSHEY_SIMPLEX, 0.5, 1, color)
+            if angle is not None:
+                angle = math.radians(angle)
+                top_down = draw_direction(top_down, angle, x, y, 50, color, 3)
 
-        for zone in list(flatten_dict(zones).values()):
-            cv.rectangle(top_down, zone.p1, zone.p2, zone.color, 2)
+            cv.rectangle(top_down, p1, p2, color, 2)
 
+        socket.send_json({"boogers" : "test"})
         cv.imshow("Top View", top_down)
 
         if cv.waitKey(20) & 0xFF == ord('d'):
@@ -566,16 +421,8 @@ elif args.mode == "divide":
             p1 = zone.p1
             p2 = zone.p2
             color = zone.color
-            x1, y1 = p1
-            x2, y2 = p2
-            cv.rectangle(top_down, p1, p2, color, thickness=2)
-
-            (text_width, text_height), baseline = cv.getTextSize(zone.name, cv.FONT_HERSHEY_COMPLEX, 0.5, 1)
-            x = x1 + (((x2 - x1) - text_width) // 2)
-            y = y1 + (((y2 - y1) + text_height) // 2)
-            centroid = (x, y)
-
-            cv.putText(top_down, zone.name, centroid, cv.FONT_HERSHEY_COMPLEX, 0.5, (color))
+        
+            top_down  = draw_center_text(top_down, p1, p2, zone.name, cv.FONT_HERSHEY_COMPLEX, 0.5, 1, zone.color)
 
         if current_point is not None and mouse_pos is not None:
             clr_seed = mouse_pos[0]

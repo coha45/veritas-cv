@@ -1,6 +1,7 @@
 import zmq
 import cv2 as cv
-from veritascli import Leanbot, TrafficState, get_dist
+from Leanbot import Leanbot 
+from Enums import TrafficState
 import json
 
 context = zmq.Context()
@@ -20,7 +21,8 @@ while True:
     match identity.decode():
         case "TOPDOWN":
             payload = json.loads(payload.decode("utf-8"))
-            print(payload)
+            leanbots = { key : Leanbot.from_dict(leanbot) for key, leanbot in payload.items() }
+            print(leanbots)
 
         case "FOOT":
             break

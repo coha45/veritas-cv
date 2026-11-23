@@ -1,6 +1,7 @@
 from collections import deque
 import math
 import numpy as np
+from Zone import Zone
 
 class Leanbot:
     CM_PER_PIXEL = 0.1905
@@ -23,6 +24,35 @@ class Leanbot:
 
     def __repr__(self):
         return(f"Leanbot({self.last_current}, {self.violations}, {self.license_plate}, {self.time_since_entered}, {self.speed}, {self.angle})")
+
+    def to_dict(self):
+        return {
+            "last_current" : tuple(self.last_current),
+            "violations" : tuple(self.violations),
+            "movement_path" : list(self.movement_path),
+            "license_plate" : self.license_plate,
+            "current_zone" : None if self.current_zone is None else self.current_zone.to_dict(),
+            "time_since_entered" : self.time_since_entered,
+            "speed" : self.speed,
+            "angle" : self.angle,
+            "speed_initialized" : self.speed_initialized,
+            "angle_initialized" : self.angle_initialized
+        }
+
+    @staticmethod
+    def from_dict(leanbot_dict):
+        new_leanbot = Leanbot(0, 0)
+        new_leanbot.last_current = deque(leanbot_dict["last_current"], maxlen=2)
+        new_leanbot.violations = set(leanbot_dict["violations"])
+        new_leanbot.movement_path = deque(leanbot_dict["movement_path"], maxlen=50)
+        new_leanbot.license_plate = leanbot_dict["license_plate"]
+        new_leanbot.current_zone = Zone.from_dict(leanbot_dict["current_zone"]) if leanbot_dict["current_zone"] is not None else None
+        new_leanbot.time_since_entered = leanbot_dict["time_since_entered"]
+        new_leanbot.speed = leanbot_dict["speed"]
+        new_leanbot.angle = leanbot_dict["angle"]
+        new_leanbot.speed_initialized = leanbot_dict["speed_initialized"]
+        new_leanbot.angle_initialized = leanbot_dict["angle_initialized"]
+        return new_leanbot
 
     def movement_info(self, dx, dy):
         last, current = self.last_current

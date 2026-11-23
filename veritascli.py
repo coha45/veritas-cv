@@ -3,10 +3,8 @@ import os
 from ultralytics import YOLO
 import cv2 as cv
 import numpy as np
-import os.path as path
 from math import floor
 from collections import defaultdict
-from collections.abc import MutableMapping
 import math 
 import pyautogui 
 import json
@@ -92,7 +90,7 @@ elif args.mode == "run":
     source = args.source
     warp_matrix_path = args.warp_matrix_path
     road_sections = args.road_sections_path
-    identity = "client_a"
+    identity = "TOPDOWN"
 
     cap = cv.VideoCapture(capture_device)
     fps = cap.get(cv.CAP_PROP_FPS)
@@ -204,7 +202,7 @@ elif args.mode == "run":
 
             cv.rectangle(top_down, p1, p2, color, 2)
 
-        socket.send_json({"boogers" : "test"})
+        socket.send_json({ key : leanbot.to_dict() for key, leanbot in dict(leanbots).items() })
         cv.imshow("Top View", top_down)
 
         if cv.waitKey(20) & 0xFF == ord('d'):

@@ -23,7 +23,7 @@ class Zone:
             "name" : self.name,
             "type" : self.type.name,
             "color" : self.color,
-            "zone_direction" : self.zone_direction if self.zone_direction else None
+            "zone_direction" : self.zone_direction if self.zone_direction is not None else None
         }
 
     def expose(self):

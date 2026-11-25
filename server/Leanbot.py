@@ -17,6 +17,7 @@ class Leanbot:
         self.license_plate = None
         self.current_zone = None
         self.time_since_entered = 0
+        self.time_entered = 0
         self.speed = 0
         self.angle = 0
         self.speed_initialized = False
@@ -31,8 +32,9 @@ class Leanbot:
             "violations" : tuple(self.violations),
             "movement_path" : list(self.movement_path),
             "license_plate" : self.license_plate,
-            "current_zone" : None if self.current_zone is None else self.current_zone.expose(),
+            "current_zone" : None if self.current_zone is None else self.current_zone.to_dict(),
             "time_since_entered" : self.time_since_entered,
+            "time_entered" : self.time_entered,
             "speed" : self.speed,
             "angle" : self.angle,
             "speed_initialized" : self.speed_initialized,
@@ -47,7 +49,8 @@ class Leanbot:
         new_leanbot.movement_path = deque(leanbot_dict["movement_path"], maxlen=50)
         new_leanbot.license_plate = leanbot_dict["license_plate"]
         new_leanbot.current_zone = Zone.from_dict(leanbot_dict["current_zone"]) if leanbot_dict["current_zone"] is not None else None
-        new_leanbot.entered = leanbot_dict["time_since_entered"]
+        new_leanbot.time_since_entered = leanbot_dict["time_since_entered"]
+        new_leanbot.time_entered = leanbot_dict["time_entered"]
         new_leanbot.speed = leanbot_dict["speed"]
         new_leanbot.angle = leanbot_dict["angle"]
         new_leanbot.speed_initialized = leanbot_dict["speed_initialized"]
@@ -145,3 +148,23 @@ class Leanbot:
 
     def add_violation(self, violation_type):
         self.violations.add(violation_type)
+
+    def check_current_zone(self, zones, point, time_elapsed):
+        if self.current_zone is not None:
+            if self.current_zone.point_overlaps(point):
+                self.time_since_entered = time_elapsed - self.time_entered
+                return True
+            else:
+                self.current_zone = None
+                return self.check_current_zone(zones, point, time_elapsed)
+
+        for zone in zones:
+            if zone.point_overlaps(point):
+                self.time_entered = time_elapsed
+                self.time_since_entered = 0
+                self.current_zone = zone
+                return True
+
+        return False
+
+        

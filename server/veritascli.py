@@ -14,7 +14,7 @@ from utils import *
 
 from Leanbot import Leanbot
 from Zone import Zone
-from Enums import ZoneType, TrafficState
+from Enums import ZoneType, TrafficState, ViolationType
 
 parser = argparse.ArgumentParser(
     prog="veritas",
@@ -124,6 +124,8 @@ elif args.mode == "run":
 
         time_elapsed = step/fps
 
+        pedestrians = 0
+
         if warp_matrix is None:
             top_down = frame
         else:
@@ -156,10 +158,20 @@ elif args.mode == "run":
                                 (x1, max(y1 - 10, 20)), cv.FONT_HERSHEY_SIMPLEX,
                                 0.6, colour, 2) 
 
+                    if class_name == "Pedestrian":
+                        pedestrian_lane = list(filter(lambda x : x.name == "pedestrian_lane", zones))
+                        for p in pedestrian_lane:
+                            if p.point_overlaps(centroid):            
+                                pedestrians += 1
+                                print("pedestrian in pedestrian lane!")
+
                     # Draw movement path if result object is a leanbot.                    
                     if class_name == "Leanbot":
                         cur_leanbot = leanbots[id]
                         x, y = centroid
+
+                        if len(cur_leanbot.violations) >= 1:
+                            colour = (0, 0, 255)
 
                         # Update Space-Time
                         if step % UPDATE_INTERVAL == 0:
@@ -184,11 +196,13 @@ elif args.mode == "run":
                         cv.putText(top_down, f"Speed: {speed:0.2f}cm/s", (x1, max(y1 - 25, 50)),
                                    cv.FONT_HERSHEY_SIMPLEX, 0.6, colour, 2)
 
-                        print(cur_leanbot.violations)
+                        cur_leanbot.check_current_zone(zones, centroid, time_elapsed)
+
+                        if cur_leanbot.current_zone is not None:
+                            if cur_leanbot.current_zone.type == ZoneType.PEDESTRIAN_LANE and pedestrians >= 1:
+                                cur_leanbot.add_violation(ViolationType.FAILURE_TO_YIELD.name)
                         
-                        if speed > 40:
-                            cur_leanbot.add_violation("Speeding")
-                    
+                         
         for zone in zones:
             p1 = zone.p1
             p2 = zone.p2
@@ -211,7 +225,20 @@ elif args.mode == "run":
             for key, leanbot in dict(leanbots).items() 
         }
 
+        # Send Leanbot state to BROKER
         socket.send_json(leanbot_dict)
+
+        # Wait for mutated Leanbot state from BROKER
+        updated_leanbot_dict = socket.recv_json()
+
+        # Update local Leanbot instances with returned violations
+        for key, data in updated_leanbot_dict.items():
+            leanbot_id = float(key)
+            if leanbot_id in leanbots.keys():
+                print(leanbots[leanbot_id].violations)
+                leanbots[leanbot_id] = Leanbot.from_dict(data)
+
+        # Publish video frame
         publish_frame(video_socket, top_down, b"VIDEO_TOPDOWN", 1)
 
         if cv.waitKey(20) & 0xFF == ord('d'):

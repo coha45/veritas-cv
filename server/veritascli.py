@@ -79,9 +79,33 @@ elif args.mode == "train":
 
 
     results = model.train()
+
 elif args.mode == "run":
-    print("READY:RUN", flush=True)
+    print(f"READY:RUN:{args.camera_type}", flush=True)
+
     UPDATE_INTERVAL = 15
+    CONFIDENCE_THRESHOLD = 0.4
+
+    # IMPORTANT: Change this to the exact class name in your YOLO model.
+    LICENSE_PLATE_CLASS = "LicensePlate"
+
+    camera_type = args.camera_type.upper()
+
+    CAMERA_CONFIG = {
+        "TOPDOWN": {
+            "allowed_classes": None,
+            "zones": True,
+            "pedestrians": True,
+        },
+        "FOOT": {
+            "allowed_classes": {"Leanbot", LICENSE_PLATE_CLASS},
+            "zones": False,
+            "pedestrians": False,
+        }
+    }
+
+    config = CAMERA_CONFIG[camera_type]
+
     capture_device = int(args.capture_device)
     outdir = args.outdir
     interval = int(args.interval)
@@ -91,83 +115,218 @@ elif args.mode == "run":
     warp_matrix_path = args.warp_matrix_path
     road_sections = args.road_sections_path
 
+    # Camera
     cap = cv.VideoCapture(capture_device)
+
     fps = cap.get(cv.CAP_PROP_FPS)
+    if fps <= 0:
+        fps = 30
+
     time_elapsed = 0
     step = 0
 
-    leanbots = defaultdict(lambda: Leanbot(0 ,0))
+    # TOPDOWN canonical local tracking state.
+    # FOOT maintains only camera-local tracking observations.
+    leanbots = defaultdict(lambda: Leanbot(0, 0))
 
     # Server Communication
     context = zmq.Context()
+
     socket = context.socket(zmq.DEALER)
-    socket.setsockopt(zmq.IDENTITY, b"TOPDOWN")
+    socket.setsockopt(zmq.IDENTITY, camera_type.encode())
     socket.connect("tcp://127.0.0.1:5555")
 
     video_socket = context.socket(zmq.DEALER)
-    video_socket.setsockopt(zmq.IDENTITY, b"VIDEO_TOPDOWN")
+    video_socket.setsockopt(
+        zmq.IDENTITY,
+        f"VIDEO_{camera_type}".encode()
+    )
     video_socket.connect("tcp://127.0.0.1:5555")
 
     # Process Zones
-    zones = Zone.load_zones(road_sections)
-    
-    model = YOLO(model=model_path) 
-    if warp_matrix_path is not None: 
-        warp_matrix = np.float32(np.load(args.warp_matrix_path))
+    zones = (
+        Zone.load_zones(road_sections)
+        if config["zones"]
+        else []
+    )
+
+    # Model
+    model = YOLO(model=model_path)
+
+    if warp_matrix_path is not None:
+        warp_matrix = np.float32(
+            np.load(warp_matrix_path)
+        )
     else:
         warp_matrix = None
 
-    while True:
-        ret, frame = cap.read()
+    print(f"[{camera_type}] Camera initialized")
 
-        if not ret: break
+    try:
+        while True:
 
-        time_elapsed = step/fps
+            ret, frame = cap.read()
 
-        pedestrians = 0
+            if not ret:
+                break
 
-        if warp_matrix is None:
-            top_down = frame
-        else:
-            top_down = cv.warpPerspective(frame, warp_matrix, (640, 640))
-        results = model.track(top_down, verbose=False, stream=True, persist=True, tracker="bytetrack.yaml")
+            time_elapsed = step / fps
+            pedestrians = 0
 
-        for result in results:
-            # Get Ids and convert to list
-            if result.boxes is None or result.boxes.id is None: continue
-            ids = result.boxes.id.cpu().tolist()
-            class_names = result.names
-            for box, id in zip(result.boxes, ids):
-                if box.conf[0] > 0.4:
-                    x1, y1, x2, y2 = map(int, box.xyxy[0])
-                    centroid = (x1 + ((x2 - x1)//2)), (y1 + ((y2 - y1)// 2))
+            # FOOT observations for this frame
+            foot_leanbots = {}
+            license_plates = {}
+
+            # Perspective Transformation
+            if warp_matrix is None:
+                top_down = frame.copy()
+            else:
+                top_down = cv.warpPerspective(
+                    frame,
+                    warp_matrix,
+                    (640, 640)
+                )
+
+            results = model.track(
+                top_down,
+                verbose=False,
+                stream=True,
+                persist=True,
+                tracker="bytetrack.yaml"
+            )
+
+            for result in results:
+
+                if result.boxes is None:
+                    continue
+
+                if result.boxes.id is None:
+                    continue
+
+                ids = result.boxes.id.cpu().tolist()
+                class_names = result.names
+
+                for box, track_id in zip(result.boxes, ids):
+
+                    conf = float(box.conf[0])
+
+                    if conf <= CONFIDENCE_THRESHOLD:
+                        continue
+
+                    x1, y1, x2, y2 = map(
+                        int,
+                        box.xyxy[0]
+                    )
+
+                    centroid = (
+                        x1 + ((x2 - x1) // 2),
+                        y1 + ((y2 - y1) // 2)
+                    )
 
                     cls = int(box.cls[0])
                     class_name = class_names[cls]
 
-                    conf = float(box.conf[0])
+                    # Camera-specific class filtering
+                    if (
+                        config["allowed_classes"] is not None
+                        and class_name not in config["allowed_classes"]
+                    ):
+                        continue
 
                     colour = get_color(cls)
+
+                    # ==========================================
+                    # LEANBOT DETECTION
+                    # ==========================================
+
                     if class_name == "Leanbot":
-                        if len(leanbots[id].violations) >= 1:
-                            colour = (0, 0, 255)
-                        
-                    cv.rectangle(top_down, (x1, y1), (x2, y2), colour, 2)
 
-                    cv.putText(top_down, f"{class_name} {conf:.2f}",
-                                (x1, max(y1 - 10, 20)), cv.FONT_HERSHEY_SIMPLEX,
-                                0.6, colour, 2) 
+                        if camera_type == "TOPDOWN":
 
-                    if class_name == "Pedestrian":
-                        pedestrian_lane = list(filter(lambda x : x.name == "pedestrian_lane", zones))
-                        for p in pedestrian_lane:
-                            if p.point_overlaps(centroid):            
+                            cur_leanbot = leanbots[track_id]
+
+                            if len(cur_leanbot.violations) >= 1:
+                                colour = (0, 0, 255)
+
+                        else:
+
+                            # FOOT tracker ID is camera-local.
+                            # Never use it as a canonical broker ID.
+                            foot_leanbots[int(track_id)] = {
+                                "bbox": [x1, y1, x2, y2],
+                                "centroid": list(centroid),
+                                "confidence": conf
+                            }
+
+                    # ==========================================
+                    # LICENSE PLATE DETECTION
+                    # ==========================================
+
+                    elif class_name == LICENSE_PLATE_CLASS:
+
+                        if camera_type == "FOOT":
+
+                            license_plates[int(track_id)] = {
+                                "bbox": [x1, y1, x2, y2],
+                                "centroid": list(centroid),
+                                "confidence": conf
+                            }
+
+                    # ==========================================
+                    # DRAW DETECTIONS
+                    # ==========================================
+
+                    cv.rectangle(
+                        top_down,
+                        (x1, y1),
+                        (x2, y2),
+                        colour,
+                        2
+                    )
+
+                    cv.putText(
+                        top_down,
+                        f"{class_name} {conf:.2f}",
+                        (x1, max(y1 - 10, 20)),
+                        cv.FONT_HERSHEY_SIMPLEX,
+                        0.6,
+                        colour,
+                        2
+                    )
+
+                    # ==========================================
+                    # TOPDOWN PEDESTRIAN DETECTION
+                    # ==========================================
+
+                    if (
+                        config["pedestrians"]
+                        and class_name == "Pedestrian"
+                    ):
+
+                        pedestrian_lane = [
+                            zone for zone in zones
+                            if zone.name == "pedestrian_lane"
+                        ]
+
+                        for pedestrian_zone in pedestrian_lane:
+
+                            if pedestrian_zone.point_overlaps(centroid):
                                 pedestrians += 1
-                                print("pedestrian in pedestrian lane!")
+                                print(
+                                    "pedestrian in pedestrian lane!"
+                                )
 
-                    # Draw movement path if result object is a leanbot.                    
-                    if class_name == "Leanbot":
-                        cur_leanbot = leanbots[id]
+                    # ==========================================
+                    # TOPDOWN LEANBOT PROCESSING
+                    # ==========================================
+
+                    if (
+                        camera_type == "TOPDOWN"
+                        and class_name == "Leanbot"
+                    ):
+
+                        cur_leanbot = leanbots[track_id]
+
                         x, y = centroid
 
                         if len(cur_leanbot.violations) >= 1:
@@ -175,79 +334,223 @@ elif args.mode == "run":
 
                         # Update Space-Time
                         if step % UPDATE_INTERVAL == 0:
-                            cur_leanbot.update_last(x, y, time_elapsed)
 
-                        # Path
+                            cur_leanbot.update_last(
+                                x,
+                                y,
+                                time_elapsed
+                            )
+
+                        # Velocity
                         speed, _ = cur_leanbot.get_velocity_vector()
+
                         angle = cur_leanbot.get_avg_angle_in_radians()
+
                         print(f"Speed: {speed}")
 
+                        # Movement path
+                        points = cur_leanbot.get_polylines(
+                            centroid
+                        )
 
-                        # Draw lines
-                        points = cur_leanbot.get_polylines(centroid) 
-                        cv.polylines(top_down, [points], isClosed=False, color=colour, thickness=2)
-
+                        cv.polylines(
+                            top_down,
+                            [points],
+                            isClosed=False,
+                            color=colour,
+                            thickness=2
+                        )
 
                         if angle is not None:
-                            top_down = draw_direction(top_down, angle, x, y)
-                            cv.putText(top_down, f"Angle: {angle:0.2f}", (x1, max(y - 35, 70)),
-                                   cv.FONT_HERSHEY_SIMPLEX, 0.6, colour, 2)
 
-                        cv.putText(top_down, f"Speed: {speed:0.2f}cm/s", (x1, max(y1 - 25, 50)),
-                                   cv.FONT_HERSHEY_SIMPLEX, 0.6, colour, 2)
+                            top_down = draw_direction(
+                                top_down,
+                                angle,
+                                x,
+                                y
+                            )
 
-                        cur_leanbot.check_current_zone(zones, centroid, time_elapsed)
+                            cv.putText(
+                                top_down,
+                                f"Angle: {angle:0.2f}",
+                                (x1, max(y - 35, 70)),
+                                cv.FONT_HERSHEY_SIMPLEX,
+                                0.6,
+                                colour,
+                                2
+                            )
+
+                        cv.putText(
+                            top_down,
+                            f"Speed: {speed:0.2f}cm/s",
+                            (x1, max(y1 - 25, 50)),
+                            cv.FONT_HERSHEY_SIMPLEX,
+                            0.6,
+                            colour,
+                            2
+                        )
+
+                        # Zone processing
+                        cur_leanbot.check_current_zone(
+                            zones,
+                            centroid,
+                            time_elapsed
+                        )
 
                         if cur_leanbot.current_zone is not None:
-                            if cur_leanbot.current_zone.type == ZoneType.PEDESTRIAN_LANE and pedestrians >= 1:
-                                cur_leanbot.add_violation(ViolationType.FAILURE_TO_YIELD.name)
-                        
-                         
-        for zone in zones:
-            p1 = zone.p1
-            p2 = zone.p2
-            x1, y1 = p1
-            x2, y2 = p2
-            angle = zone.zone_direction
-            x, y = (x1 + ((x2 - x1)//2), y1 + ((y2 - y1)//2))
-            color = zone.color
-            top_down = draw_center_text(top_down, p1, p2, zone.name, cv.FONT_HERSHEY_SIMPLEX, 0.5, 1, color)
-            if angle is not None:
-                angle = math.radians(angle)
-                top_down = draw_direction(top_down, angle, x, y, 50, color, 3)
 
-            cv.rectangle(top_down, p1, p2, color, 2)
+                            if (
+                                cur_leanbot.current_zone.type
+                                == ZoneType.PEDESTRIAN_LANE
+                                and pedestrians >= 1
+                            ):
 
-        cv.imshow("Top View", top_down)
+                                cur_leanbot.add_violation(
+                                    ViolationType.FAILURE_TO_YIELD.name
+                                )
 
-        leanbot_dict = {
-            key : leanbot.to_dict()
-            for key, leanbot in dict(leanbots).items() 
-        }
+            # ==========================================
+            # DRAW ZONES (TOPDOWN ONLY)
+            # ==========================================
 
-        # Send Leanbot state to BROKER
-        socket.send_json(leanbot_dict)
+            if config["zones"]:
 
-        # Wait for mutated Leanbot state from BROKER
-        updated_leanbot_dict = socket.recv_json()
+                for zone in zones:
 
-        # Update local Leanbot instances with returned violations
-        for key, data in updated_leanbot_dict.items():
-            leanbot_id = float(key)
-            if leanbot_id in leanbots.keys():
-                print(leanbots[leanbot_id].violations)
-                leanbots[leanbot_id] = Leanbot.from_dict(data)
+                    p1 = zone.p1
+                    p2 = zone.p2
 
-        # Publish video frame
-        publish_frame(video_socket, top_down, b"VIDEO_TOPDOWN", 1)
+                    x1, y1 = p1
+                    x2, y2 = p2
 
-        if cv.waitKey(20) & 0xFF == ord('d'):
-            break
+                    angle = zone.zone_direction
 
-        step += 1
+                    x, y = (
+                        x1 + ((x2 - x1) // 2),
+                        y1 + ((y2 - y1) // 2)
+                    )
 
-    cap.release()
-    cv.destroyAllWindows()
+                    color = zone.color
+
+                    top_down = draw_center_text(
+                        top_down,
+                        p1,
+                        p2,
+                        zone.name,
+                        cv.FONT_HERSHEY_SIMPLEX,
+                        0.5,
+                        1,
+                        color
+                    )
+
+                    if angle is not None:
+
+                        angle = math.radians(angle)
+
+                        top_down = draw_direction(
+                            top_down,
+                            angle,
+                            x,
+                            y,
+                            50,
+                            color,
+                            3
+                        )
+
+                    cv.rectangle(
+                        top_down,
+                        p1,
+                        p2,
+                        color,
+                        2
+                    )
+
+            # ==========================================
+            # DISPLAY
+            # ==========================================
+
+            cv.imshow(
+                f"{camera_type} View",
+                top_down
+            )
+
+            # ==========================================
+            # SERVER COMMUNICATION
+            # ==========================================
+
+            if camera_type == "TOPDOWN":
+
+                # Serialize canonical Leanbot state
+                leanbot_dict = {
+                    key: leanbot.to_dict()
+                    for key, leanbot in dict(leanbots).items()
+                }
+
+                # Preserve original TOPDOWN protocol
+                socket.send_json(leanbot_dict)
+
+                # Receive broker-mutated state
+                updated_leanbot_dict = socket.recv_json()
+
+                # Update local Leanbot instances
+                for key, data in updated_leanbot_dict.items():
+
+                    leanbot_id = float(key)
+
+                    if leanbot_id in leanbots.keys():
+
+                        leanbots[leanbot_id] = Leanbot.from_dict(data)
+
+            # ==========================================
+            # FOOT COMMUNICATION
+            # ==========================================
+
+            elif camera_type == "FOOT":
+
+                payload = {
+                    "camera_type": "FOOT",
+                    "frame": step,
+                    "timestamp": time_elapsed,
+                    "leanbots": foot_leanbots,
+                    "license_plates": license_plates
+                }
+
+                socket.send_json(payload)
+
+                # Broker acknowledgment
+                response = socket.recv_json()
+
+                if response.get("status") != "received":
+                    print("[FOOT] Broker did not acknowledge frame")
+
+            # ==========================================
+            # PUBLISH VIDEO
+            # ==========================================
+
+            publish_frame(
+                video_socket,
+                top_down,
+                f"VIDEO_{camera_type}".encode(),
+                1
+            )
+
+            # ==========================================
+            # EXIT
+            # ==========================================
+
+            if cv.waitKey(20) & 0xFF == ord('d'):
+                break
+
+            step += 1
+
+    finally:
+
+        cap.release()
+        cv.destroyAllWindows()
+
+        socket.close()
+        video_socket.close()
+        context.term()
 
 elif args.mode == "calibrate":
     filename = input("Perspective Warp Name: ") + ".npy"

@@ -64,7 +64,7 @@ if args.mode == "gather":
             break
         elif key == 32:
             if interval == 0:
-                drawn = save_img(drawn, frame)
+                drawn = save_img(outdir, cap, drawn, frame)
                     
         cv.imshow("Gather Mode", drawn)
         

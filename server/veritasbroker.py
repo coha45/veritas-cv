@@ -27,22 +27,29 @@ while True:
     match identity.decode():
 
         case "TOPDOWN":
-
             leanbot_data = json.loads(
                 payload[0].decode("utf-8")
             )
 
-            leanbots = {
-                key: Leanbot.from_dict(value)
-                for key, value in leanbot_data.items()
-            }
+            # Prepare Data to Match Website's Requirements
+            leanbots = []
+            for key, leanbot in leanbot_data.items(): 
+                leanbots.append({
+                    "id" : key,
+                    "license_plate" : leanbot["license_plate"],
+                    "current_zone" : leanbot["current_zone"],
+                    "speed" : leanbot["speed"],
+                    "angle" : leanbot["angle"]
+                })
+
+            print(leanbots)
 
             print("[BROKER] Publishing State")
 
             state_pub.send_json({
                 "type": "state_snapshot",
                 "source": "TOPDOWN",
-                "leanbots": leanbot_data,
+                "leanbots": leanbots,
                 "traffic_state": traffic_state.name
             })
 

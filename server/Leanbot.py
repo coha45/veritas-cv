@@ -31,7 +31,7 @@ class Leanbot:
             "violations" : tuple(self.violations),
             "movement_path" : list(self.movement_path),
             "license_plate" : self.license_plate,
-            "current_zone" : None if self.current_zone is None else self.current_zone.to_dict(),
+            "current_zone" : None if self.current_zone is None else self.current_zone.expose(),
             "time_since_entered" : self.time_since_entered,
             "speed" : self.speed,
             "angle" : self.angle,

@@ -25,6 +25,14 @@ class Zone:
             "color" : self.color,
             "zone_direction" : self.zone_direction if self.zone_direction else None
         }
+
+    def expose(self):
+        zone_dict = self.to_dict()
+        return {
+            "type" : zone_dict["type"],
+            "name" : zone_dict["name"],
+            "zone_direction" : zone_dict["zone_direction"]
+        }
     
     @staticmethod
     def from_dict(zone_dict):

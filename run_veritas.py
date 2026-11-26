@@ -40,32 +40,32 @@ def main():
     )
     parser.add_argument(
         "--topdown-camera",
-        default="0",
-        help="Camera index, Linux /dev/video path, or 'picamera2' (default: 0)",
-    )
-    parser.add_argument(
-        "--foot-camera",
         default="1",
         help="Camera index, Linux /dev/video path, or 'picamera2' (default: 1)",
     )
     parser.add_argument(
+        "--foot-camera",
+        default="0",
+        help="Camera index, Linux /dev/video path, or 'picamera2' (default: 0)",
+    )
+    parser.add_argument(
         "--topdown-model",
-        default="server/models/best.pt",
+        default="server/models/16image.pt",
         help="TOPDOWN YOLO model path",
     )
     parser.add_argument(
         "--foot-model",
-        default="server/models/best.pt",
+        default="server/models/16image.pt",
         help="FOOT YOLO model path",
     )
     parser.add_argument(
         "--topdown-warp",
-        default="server/warps/topdown.npy",
+        default="server/tests/topdown.npy",
         help="Optional TOPDOWN perspective warp matrix",
     )
     parser.add_argument(
         "--foot-warp",
-        default="server/warps/foot_warp_mid.npy",
+        default="server/tests/foot.npy",
         help="FOOT-to-TOPDOWN warp matrix used for Leanbot matching",
     )
     parser.add_argument(
@@ -89,6 +89,15 @@ def main():
         help="Use active-low module inputs (default is active-high)",
     )
     args = parser.parse_args()
+
+    if (str(args.topdown_camera).strip().isdecimal()
+            and str(args.foot_camera).strip().isdecimal()
+            and int(args.topdown_camera) == int(args.foot_camera)):
+        parser.error(
+            "TOPDOWN and FOOT cannot share the same camera index. "
+            "Choose the two camera indexes separately, for example "
+            "--topdown-camera 1 --foot-camera 0."
+        )
 
     broker_environment = os.environ.copy()
     if args.gpio:
@@ -133,6 +142,7 @@ def main():
         "--camera_type", "FOOT",
         "--capture_device", str(args.foot_camera),
         "--model", str(foot_model),
+        "--road_sections_path", str(road_sections),
         "--warp_matrix_path", str(foot_warp),
     ]
 

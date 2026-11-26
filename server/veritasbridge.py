@@ -11,7 +11,7 @@ from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconn
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 import uvicorn
-from database import initialize, list_records, set_approval, upsert_detections
+from database import initialize, list_records, save_approved
 
 
 # ==========================================
@@ -126,12 +126,6 @@ def zmq_listener(loop):
             if len(parts) == 1:
 
                 message = json.loads(parts[0])
-                if message.get("type") == "state_snapshot" and message.get("source") == "TOPDOWN":
-                    try:
-                        upsert_detections(message.get("leanbots", []))
-                    except Exception as error:
-                        print("[DB] Could not persist detections:", repr(error))
-
                 future = asyncio.run_coroutine_threadsafe(
                     broadcast(message),
                     loop
@@ -254,11 +248,18 @@ async def update_leanbot_approval(leanbot_id: str, request: Request):
     except Exception as error:
         raise HTTPException(status_code=400, detail="Expected JSON with approval") from error
     approval = body.get("approval") if isinstance(body, dict) else None
-    if approval not in {"approved", "rejected", "pending"}:
-        raise HTTPException(status_code=400, detail="Approval must be approved, rejected, or pending")
-    if not set_approval(leanbot_id, approval):
-        raise HTTPException(status_code=404, detail="Leanbot record not found")
-    return {"ok": True, "leanbot_id": leanbot_id, "approval": approval}
+    if approval not in {"approved", "rejected"}:
+        raise HTTPException(status_code=400, detail="Approval must be approved or rejected")
+    if approval == "rejected":
+        return {"ok": True, "leanbot_id": leanbot_id, "approval": "rejected", "stored": False}
+    record = body.get("record")
+    if not isinstance(record, dict) or str(record.get("id")) != leanbot_id:
+        raise HTTPException(status_code=400, detail="A matching Leanbot record is required for approval")
+    try:
+        await asyncio.to_thread(save_approved, record)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    return {"ok": True, "leanbot_id": leanbot_id, "approval": "approved", "stored": True}
 
 
 @app.get("/health/captures")

@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import Page from './Page'
 import { useVeritas } from '../context/VeritasContext'
 
@@ -97,7 +97,7 @@ function ApprovalQueue({ leanbots, decisions, onDecision }) {
                         type="button"
                         className={`btn btn-xs ${decision === 'approved' ? 'btn-success' : 'btn-outline btn-success'}`}
                         aria-pressed={decision === 'approved'}
-                        onClick={() => onDecision(id, decision === 'approved' ? null : 'approved')}
+                        onClick={() => onDecision(id, 'approved', bot)}
                       >
                         Approve
                       </button>
@@ -105,7 +105,7 @@ function ApprovalQueue({ leanbots, decisions, onDecision }) {
                         type="button"
                         className={`btn btn-xs ${decision === 'rejected' ? 'btn-error' : 'btn-outline btn-error'}`}
                         aria-pressed={decision === 'rejected'}
-                        onClick={() => onDecision(id, decision === 'rejected' ? null : 'rejected')}
+                        onClick={() => onDecision(id, 'rejected', bot)}
                       >
                         Reject
                       </button>
@@ -177,6 +177,27 @@ export default function Database() {
   const [recordsLoading, setRecordsLoading] = useState(false)
   const [recordsError, setRecordsError] = useState('')
 
+  useEffect(() => {
+    let active = true
+    fetch(`${apiOrigin}/api/database/leanbots`)
+      .then(response => {
+        if (!response.ok) throw new Error(`Database returned HTTP ${response.status}`)
+        return response.json()
+      })
+      .then(payload => {
+        if (!active) return
+        const loadedRecords = Array.isArray(payload.records) ? payload.records : []
+        setRecords(loadedRecords)
+        setDecisions(Object.fromEntries(
+          loadedRecords
+            .filter(record => ['approved', 'rejected'].includes(record.approval))
+            .map(record => [String(record.leanbot_id), record.approval])
+        ))
+      })
+      .catch(error => { if (active) setRecordsError(`Could not load SQLite records. ${error.message}`) })
+    return () => { active = false }
+  }, [])
+
   const loadRecords = async () => {
     setRecordsLoading(true)
     setRecordsError('')
@@ -201,12 +222,17 @@ export default function Database() {
     }
   }, [decisions, leanbots])
 
-  const setDecision = async (id, decision) => {
+  const pendingLeanbots = useMemo(
+    () => leanbots.filter(bot => !decisions[String(bot.id)]),
+    [decisions, leanbots]
+  )
+
+  const setDecision = async (id, decision, bot) => {
     try {
       const response = await fetch(`${apiOrigin}/api/database/leanbots/${encodeURIComponent(id)}/approval`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ approval: decision ?? 'pending' }),
+        body: JSON.stringify({ approval: decision, ...(decision === 'approved' ? { record: bot } : {}) }),
       })
       const result = await response.json()
       if (!response.ok) throw new Error(result.detail || 'Approval update failed')
@@ -262,7 +288,7 @@ export default function Database() {
           <section className="space-y-4">
             <div className="flex flex-col gap-3 rounded-2xl border border-cyan-100 bg-cyan-50/70 p-4 sm:flex-row sm:items-center sm:justify-between">
               <p className="text-sm text-cyan-950">
-                Approval decisions are saved to the local SQLite database.
+                Approve confirmed detections. Reject false detections; reviewed items leave this queue and remain recorded in SQLite.
               </p>
               <div className="flex gap-3 text-xs font-semibold text-slate-600">
                 <span>{decisionCounts.pending} pending</span>
@@ -270,7 +296,7 @@ export default function Database() {
                 <span className="text-rose-700">{decisionCounts.rejected} rejected</span>
               </div>
             </div>
-            <ApprovalQueue leanbots={leanbots} decisions={decisions} onDecision={setDecision} />
+            <ApprovalQueue leanbots={pendingLeanbots} decisions={decisions} onDecision={setDecision} />
           </section>
         ) : (
           <DatabaseRecords records={records} loading={recordsLoading} error={recordsError} onRefresh={loadRecords} />

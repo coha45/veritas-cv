@@ -32,6 +32,7 @@ parser.add_argument("-i", "--interval", default=5)
 parser.add_argument("-m", "--model")
 parser.add_argument("-s", "--source")
 parser.add_argument("-rs", "--road_sections_path")
+parser.add_argument("--camera_type")
 
 args = parser.parse_args()
 
@@ -87,7 +88,7 @@ elif args.mode == "run":
     CONFIDENCE_THRESHOLD = 0.4
 
     # IMPORTANT: Change this to the exact class name in your YOLO model.
-    LICENSE_PLATE_CLASS = "LicensePlate"
+    LICENSE_PLATE_CLASS = "Plate"
 
     camera_type = args.camera_type.upper()
 
@@ -177,33 +178,56 @@ elif args.mode == "run":
             foot_leanbots = {}
             license_plates = {}
 
-            # Perspective Transformation
-            if warp_matrix is None:
-                top_down = frame.copy()
+
+            
+            # ==========================================
+            # CAMERA INPUT
+            # ==========================================
+
+            if camera_type == "FOOT":
+                detection_frame = frame.copy()
+
             else:
-                top_down = cv.warpPerspective(
-                    frame,
-                    warp_matrix,
-                    (640, 640)
-                )
+                if warp_matrix is None:
+                    detection_frame = frame.copy()
+                else:
+                    detection_frame = cv.warpPerspective(
+                        frame,
+                        warp_matrix,
+                        (640, 640)
+                    )
+
+            top_down = detection_frame.copy()
+
+            # Per-frame observations
+            foot_leanbots = {}
+            license_plates = {}
+            plate_images = []
+
+            # TOPDOWN ground positions for broker association
+            topdown_positions = {}
 
             results = model.track(
-                top_down,
+                detection_frame,
                 verbose=False,
                 stream=True,
                 persist=True,
                 tracker="bytetrack.yaml"
             )
 
+
             for result in results:
 
                 if result.boxes is None:
                     continue
 
-                if result.boxes.id is None:
-                    continue
-
-                ids = result.boxes.id.cpu().tolist()
+                # Keep detections visible even when the tracker has not
+                # assigned an ID to them yet.
+                ids = (
+                    result.boxes.id.cpu().tolist()
+                    if result.boxes.id is not None
+                    else [None] * len(result.boxes)
+                )
                 class_names = result.names
 
                 for box, track_id in zip(result.boxes, ids):
@@ -217,6 +241,13 @@ elif args.mode == "run":
                         int,
                         box.xyxy[0]
                     )
+
+                    # Clip coordinates to the image currently being shown.
+                    frame_height, frame_width = top_down.shape[:2]
+                    x1 = max(0, min(x1, frame_width - 1))
+                    x2 = max(0, min(x2, frame_width - 1))
+                    y1 = max(0, min(y1, frame_height - 1))
+                    y2 = max(0, min(y2, frame_height - 1))
 
                     centroid = (
                         x1 + ((x2 - x1) // 2),
@@ -239,60 +270,98 @@ elif args.mode == "run":
                     # LEANBOT DETECTION
                     # ==========================================
 
-                    if class_name == "Leanbot":
+                    if class_name == "Leanbot" and track_id is not None:
 
                         if camera_type == "TOPDOWN":
-
                             cur_leanbot = leanbots[track_id]
 
                             if len(cur_leanbot.violations) >= 1:
                                 colour = (0, 0, 255)
 
+                            # Use bottom-center for cross-camera association.
+                            ground_x = (x1 + x2) / 2.0
+                            ground_y = float(y2)
+
+                            topdown_positions[str(track_id)] = [
+                                ground_x,
+                                ground_y
+                            ]
+
                         else:
 
-                            # FOOT tracker ID is camera-local.
-                            # Never use it as a canonical broker ID.
-                            foot_leanbots[int(track_id)] = {
-                                "bbox": [x1, y1, x2, y2],
-                                "centroid": list(centroid),
-                                "confidence": conf
-                            }
+                            foot_id = str(track_id)
 
+                            # FOOT ground reference point
+                            foot_x = (x1 + x2) / 2.0
+                            foot_y = float(y2)
+
+                            if warp_matrix is not None:
+
+                                foot_point = np.array(
+                                    [[[foot_x, foot_y]]],
+                                    dtype=np.float32
+                                )
+
+                                transformed = cv.perspectiveTransform(
+                                    foot_point,
+                                    warp_matrix
+                                )
+
+                                tx, ty = transformed[0][0]
+
+                                if np.isfinite(tx) and np.isfinite(ty):
+
+                                    foot_leanbots[foot_id] = {
+                                        "coordinates": [
+                                            float(tx),
+                                            float(ty)
+                                        ],
+                                        "bbox": [x1, y1, x2, y2],
+                                        "confidence": conf
+                                    }
+                                    
                     # ==========================================
                     # LICENSE PLATE DETECTION
                     # ==========================================
 
-                    elif class_name == LICENSE_PLATE_CLASS:
+
+                    elif (
+                        class_name == LICENSE_PLATE_CLASS
+                        and track_id is not None
+                    ):
 
                         if camera_type == "FOOT":
 
-                            license_plates[int(track_id)] = {
-                                "bbox": [x1, y1, x2, y2],
-                                "centroid": list(centroid),
-                                "confidence": conf
-                            }
+                            px1 = max(0, x1)
+                            py1 = max(0, y1)
 
-                    # ==========================================
-                    # DRAW DETECTIONS
-                    # ==========================================
+                            px2 = min(frame.shape[1], x2)
+                            py2 = min(frame.shape[0], y2)
 
-                    cv.rectangle(
-                        top_down,
-                        (x1, y1),
-                        (x2, y2),
-                        colour,
-                        2
-                    )
+                            plate_crop = frame[py1:py2, px1:px2]
 
-                    cv.putText(
-                        top_down,
-                        f"{class_name} {conf:.2f}",
-                        (x1, max(y1 - 10, 20)),
-                        cv.FONT_HERSHEY_SIMPLEX,
-                        0.6,
-                        colour,
-                        2
-                    )
+                            if plate_crop.size > 0:
+
+                                success, encoded = cv.imencode(
+                                    ".jpg",
+                                    plate_crop,
+                                    [cv.IMWRITE_JPEG_QUALITY, 90]
+                                )
+
+                                if success:
+
+                                    image_index = len(plate_images)
+
+                                    plate_images.append(
+                                        encoded.tobytes()
+                                    )
+
+                                    license_plates[str(track_id)] = {
+                                        "bbox": [x1, y1, x2, y2],
+                                        "confidence": conf,
+                                        "image_index": image_index
+                                    }
+
 
                     # ==========================================
                     # TOPDOWN PEDESTRIAN DETECTION
@@ -323,11 +392,18 @@ elif args.mode == "run":
                     if (
                         camera_type == "TOPDOWN"
                         and class_name == "Leanbot"
+                        and track_id is not None
                     ):
 
                         cur_leanbot = leanbots[track_id]
 
                         x, y = centroid
+
+                        # Send current TOPDOWN position to broker
+                        topdown_positions[str(track_id)] = [
+                            float(x),
+                            float(y)
+                        ]
 
                         if len(cur_leanbot.violations) >= 1:
                             colour = (0, 0, 255)
@@ -409,6 +485,45 @@ elif args.mode == "run":
                                     ViolationType.FAILURE_TO_YIELD.name
                                 )
 
+                    # Draw every retained detection on the same image being
+                    # displayed and streamed: raw FOOT or warped TOPDOWN.
+                    cv.rectangle(
+                        top_down,
+                        (x1, y1),
+                        (x2, y2),
+                        colour,
+                        2
+                    )
+
+                    label = f"{class_name} {conf:.2f}"
+                    if track_id is not None:
+                        label += f" ID:{int(track_id)}"
+
+                    (label_width, label_height), baseline = cv.getTextSize(
+                        label,
+                        cv.FONT_HERSHEY_SIMPLEX,
+                        0.5,
+                        1
+                    )
+                    label_top = max(0, y1 - label_height - baseline - 4)
+                    cv.rectangle(
+                        top_down,
+                        (x1, label_top),
+                        (min(frame_width - 1, x1 + label_width + 4), y1),
+                        colour,
+                        cv.FILLED
+                    )
+                    cv.putText(
+                        top_down,
+                        label,
+                        (x1 + 2, max(label_height, y1 - baseline - 2)),
+                        cv.FONT_HERSHEY_SIMPLEX,
+                        0.5,
+                        (255, 255, 255),
+                        1,
+                        cv.LINE_AA
+                    )
+
             # ==========================================
             # DRAW ZONES (TOPDOWN ONLY)
             # ==========================================
@@ -480,25 +595,23 @@ elif args.mode == "run":
 
             if camera_type == "TOPDOWN":
 
-                # Serialize canonical Leanbot state
                 leanbot_dict = {
                     key: leanbot.to_dict()
                     for key, leanbot in dict(leanbots).items()
                 }
 
-                # Preserve original TOPDOWN protocol
-                socket.send_json(leanbot_dict)
+                socket.send_json({
+                    "leanbots": leanbot_dict,
+                    "positions": topdown_positions
+                })
 
-                # Receive broker-mutated state
                 updated_leanbot_dict = socket.recv_json()
 
-                # Update local Leanbot instances
                 for key, data in updated_leanbot_dict.items():
 
                     leanbot_id = float(key)
 
-                    if leanbot_id in leanbots.keys():
-
+                    if leanbot_id in leanbots:
                         leanbots[leanbot_id] = Leanbot.from_dict(data)
 
             # ==========================================
@@ -515,13 +628,18 @@ elif args.mode == "run":
                     "license_plates": license_plates
                 }
 
-                socket.send_json(payload)
+                message = [
+                    json.dumps(payload).encode("utf-8")
+                ]
 
-                # Broker acknowledgment
+                message.extend(plate_images)
+
+                socket.send_multipart(message)
+
                 response = socket.recv_json()
 
                 if response.get("status") != "received":
-                    print("[FOOT] Broker did not acknowledge frame")
+                    print("[FOOT] Broker acknowledgment failed")
 
             # ==========================================
             # PUBLISH VIDEO

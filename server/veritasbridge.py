@@ -1,11 +1,15 @@
 
 import asyncio
+import ipaddress
 import threading
 import zmq
 import json
+from pathlib import Path
 
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 import uvicorn
 
 
@@ -211,6 +215,86 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://127.0.0.1:5173",
+        "http://localhost:5173",
+    ],
+    allow_origin_regex=r"^http://(127\.0\.0\.1|localhost):[0-9]+$",
+    allow_methods=["POST"],
+    allow_headers=["Content-Type"],
+)
+
+# Serve plate evidence saved by veritasbroker.py at the same URL prefix
+# included in its published capture metadata.
+CAPTURE_DIR = Path(__file__).resolve().parent / "captures"
+CAPTURE_DIR.mkdir(parents=True, exist_ok=True)
+app.mount(
+    "/captures",
+    StaticFiles(directory=CAPTURE_DIR),
+    name="captures",
+)
+
+
+@app.get("/health/captures")
+async def capture_health():
+    """Report whether the capture directory and saved JPEGs are available."""
+    jpeg_count = sum(
+        1
+        for path in CAPTURE_DIR.iterdir()
+        if path.is_file() and path.suffix.lower() in {".jpg", ".jpeg"}
+    )
+
+    return {
+        "ok": CAPTURE_DIR.is_dir(),
+        "directory": str(CAPTURE_DIR),
+        "jpeg_count": jpeg_count,
+    }
+
+
+def send_traffic_command(state):
+    control = context.socket(zmq.REQ)
+    control.setsockopt(zmq.LINGER, 0)
+    control.setsockopt(zmq.SNDTIMEO, 2000)
+    control.setsockopt(zmq.RCVTIMEO, 2000)
+    try:
+        control.connect("tcp://127.0.0.1:5557")
+        control.send_json({
+            "command": "set_traffic_state",
+            "state": state,
+        })
+        return control.recv_json()
+    finally:
+        control.close(linger=0)
+
+
+@app.post("/api/traffic-state")
+async def update_traffic_state(request: Request):
+    """Set a traffic state from the local dashboard."""
+    client_host = request.client.host if request.client else ""
+    try:
+        if not ipaddress.ip_address(client_host).is_loopback:
+            raise HTTPException(status_code=403, detail="Local control only")
+    except ValueError as error:
+        raise HTTPException(status_code=403, detail="Local control only") from error
+
+    try:
+        body = await request.json()
+    except Exception as error:
+        raise HTTPException(status_code=400, detail="Expected JSON with a state") from error
+
+    if not isinstance(body, dict) or not isinstance(body.get("state"), str):
+        raise HTTPException(status_code=400, detail="Expected state: RED, YELLOW, or GREEN")
+
+    try:
+        result = await asyncio.to_thread(send_traffic_command, body["state"])
+    except zmq.Again as error:
+        raise HTTPException(status_code=503, detail="Traffic broker is unavailable") from error
+
+    if not result.get("ok"):
+        raise HTTPException(status_code=400, detail=result.get("error", "State update failed"))
+    return result
 
 
 # ==========================================

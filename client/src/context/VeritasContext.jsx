@@ -8,6 +8,7 @@ import {
 } from "react";
 
 const VeritasContext = createContext(null);
+const apiOrigin = `${window.location.protocol === "https:" ? "https:" : "http:"}//${window.location.hostname || "127.0.0.1"}:8000`;
 
 export function VeritasProvider({ children }) {
 
@@ -15,9 +16,10 @@ export function VeritasProvider({ children }) {
   // SHARED STATE
   // ==========================================
 
-  const [leanbots, setLeanbots] = useState({});
-  const [trafficState, setTrafficState] = useState(null);
+  const [leanbots, setLeanbots] = useState([]);
+  const [trafficState, setTrafficStateValue] = useState(null);
   const [connected, setConnected] = useState(false);
+  const [footSnapshot, setFootSnapshot] = useState(null);
 
   const [frames, setFrames] = useState({
     TOPDOWN: null,
@@ -39,7 +41,9 @@ export function VeritasProvider({ children }) {
 
     console.log("[VERITAS] Initializing WebSocket...");
 
-    const ws = new WebSocket("ws://127.0.0.1:8000/ws");
+    const wsProtocol = window.location.protocol === "https:" ? "wss" : "ws";
+    const wsHost = window.location.hostname || "127.0.0.1";
+    const ws = new WebSocket(`${wsProtocol}://${wsHost}:8000/ws`);
 
     ws.binaryType = "blob";
 
@@ -62,9 +66,17 @@ export function VeritasProvider({ children }) {
 
           if (message.type === "state_snapshot") {
 
-            setLeanbots(message.leanbots);
-            setTrafficState(message.traffic_state);
+            setLeanbots(Array.isArray(message.leanbots) ? message.leanbots : []);
+            setTrafficStateValue(message.traffic_state);
 
+          }
+
+          else if (message.type === "foot_snapshot") {
+            setFootSnapshot(message);
+          }
+
+          else if (message.type === "traffic_state") {
+            setTrafficStateValue(message.traffic_state);
           }
 
           else if (message.type === "frame") {
@@ -161,6 +173,20 @@ export function VeritasProvider({ children }) {
 
   }, []);
 
+  const setTrafficState = async (state) => {
+    const response = await fetch(`${apiOrigin}/api/traffic-state`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ state }),
+    });
+    const result = await response.json();
+    if (!response.ok) {
+      throw new Error(result.detail || "Could not update traffic state");
+    }
+    setTrafficStateValue(result.traffic_state);
+    return result.traffic_state;
+  };
+
   // ==========================================
   // CONTEXT PROVIDER
   // ==========================================
@@ -171,7 +197,9 @@ export function VeritasProvider({ children }) {
         leanbots,
         trafficState,
         connected,
-        frames
+        frames,
+        footSnapshot,
+        setTrafficState
       }}
     >
       {children}
@@ -183,6 +211,8 @@ export function VeritasProvider({ children }) {
 // CUSTOM HOOK
 // ==========================================
 
+// The context module intentionally exports both its provider and consumer hook.
+// eslint-disable-next-line react-refresh/only-export-components
 export function useVeritas() {
 
   const context = useContext(VeritasContext);

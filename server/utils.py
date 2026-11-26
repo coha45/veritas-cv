@@ -1,10 +1,90 @@
 import cv2 as cv
 import math
+import platform
 from random import seed, choice, randint
 from os import path
 from collections.abc import MutableMapping
 import time
 import json
+
+
+class _Picamera2Capture:
+    """Small VideoCapture-compatible adapter for Raspberry Pi Camera modules."""
+
+    def __init__(self, fps=30):
+        try:
+            from picamera2 import Picamera2
+        except ImportError as error:
+            raise RuntimeError(
+                "The 'picamera2' source needs Picamera2 installed on Raspberry Pi OS. "
+                "Install it with: sudo apt install python3-picamera2"
+            ) from error
+
+        self.fps = fps
+        self.camera = Picamera2()
+        config = self.camera.create_video_configuration(
+            main={"size": (1280, 720), "format": "BGR888"},
+            controls={"FrameRate": fps},
+        )
+        self.camera.configure(config)
+        self.camera.start()
+
+    def read(self):
+        try:
+            return True, self.camera.capture_array()
+        except Exception as error:
+            print(f"[CAMERA] Picamera2 capture failed: {error}", flush=True)
+            return False, None
+
+    def get(self, property_id):
+        if property_id == cv.CAP_PROP_FPS:
+            return float(self.fps)
+        return 0.0
+
+    def release(self):
+        self.camera.stop()
+        self.camera.close()
+
+
+def open_camera(source=0):
+    """Open a USB/webcam source across Windows and Linux, or Pi Camera via Picamera2.
+
+    Numeric strings are treated as device indexes. Linux device paths such as
+    /dev/video0 are accepted, and the special source ``picamera2`` selects the
+    Raspberry Pi Camera module interface.
+    """
+    source_text = str(source).strip()
+    if source_text.lower() in {"picamera2", "picamera"}:
+        if platform.system() != "Linux":
+            raise RuntimeError("The picamera2 source is only available on Raspberry Pi OS/Linux")
+        return _Picamera2Capture()
+
+    device = int(source_text) if source_text.isdecimal() else source
+    system = platform.system()
+    if system == "Windows":
+        backends = [cv.CAP_DSHOW, cv.CAP_MSMF, cv.CAP_ANY]
+    elif system == "Linux":
+        backends = [cv.CAP_V4L2, cv.CAP_ANY]
+    else:
+        backends = [cv.CAP_ANY]
+
+    failures = []
+    for backend in backends:
+        capture = cv.VideoCapture(device, backend)
+        if capture.isOpened():
+            capture.set(cv.CAP_PROP_BUFFERSIZE, 1)
+            backend_name = capture.getBackendName() if hasattr(capture, "getBackendName") else str(backend)
+            print(f"[CAMERA] Opened source {source_text} with {backend_name}", flush=True)
+            return capture
+        capture.release()
+        failures.append(str(backend))
+
+    source_hint = "USB camera index or video path"
+    raise RuntimeError(
+        f"Could not open camera source {source_text!r} on {system}. "
+        f"Tried OpenCV backends {', '.join(failures)}; check the {source_hint}, "
+        "permissions, and whether another app is using the camera."
+    )
 
 def gen_key():
     ch = "abcdefghijklmnopqrstuvwxyz1234567890"

@@ -11,6 +11,7 @@ from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconn
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 import uvicorn
+from database import initialize, list_records, set_approval, upsert_detections
 
 
 # ==========================================
@@ -125,6 +126,11 @@ def zmq_listener(loop):
             if len(parts) == 1:
 
                 message = json.loads(parts[0])
+                if message.get("type") == "state_snapshot" and message.get("source") == "TOPDOWN":
+                    try:
+                        upsert_detections(message.get("leanbots", []))
+                    except Exception as error:
+                        print("[DB] Could not persist detections:", repr(error))
 
                 future = asyncio.run_coroutine_threadsafe(
                     broadcast(message),
@@ -190,6 +196,7 @@ async def lifespan(app: FastAPI):
     main_loop = asyncio.get_running_loop()
 
     broadcast_lock = asyncio.Lock()
+    initialize()
 
     shutdown_event.clear()
 
@@ -236,6 +243,23 @@ app.mount(
     name="captures",
 )
 
+@app.get("/api/database/leanbots")
+async def get_leanbot_records():
+    return {"records": list_records()}
+
+@app.post("/api/database/leanbots/{leanbot_id}/approval")
+async def update_leanbot_approval(leanbot_id: str, request: Request):
+    try:
+        body = await request.json()
+    except Exception as error:
+        raise HTTPException(status_code=400, detail="Expected JSON with approval") from error
+    approval = body.get("approval") if isinstance(body, dict) else None
+    if approval not in {"approved", "rejected", "pending"}:
+        raise HTTPException(status_code=400, detail="Approval must be approved, rejected, or pending")
+    if not set_approval(leanbot_id, approval):
+        raise HTTPException(status_code=404, detail="Leanbot record not found")
+    return {"ok": True, "leanbot_id": leanbot_id, "approval": approval}
+
 
 @app.get("/health/captures")
 async def capture_health():
@@ -253,7 +277,7 @@ async def capture_health():
     }
 
 
-def send_traffic_command(state):
+def send_traffic_command(checker_id, state):
     control = context.socket(zmq.REQ)
     control.setsockopt(zmq.LINGER, 0)
     control.setsockopt(zmq.SNDTIMEO, 2000)
@@ -262,6 +286,7 @@ def send_traffic_command(state):
         control.connect("tcp://127.0.0.1:5557")
         control.send_json({
             "command": "set_traffic_state",
+            "checker_id": checker_id,
             "state": state,
         })
         return control.recv_json()
@@ -284,11 +309,22 @@ async def update_traffic_state(request: Request):
     except Exception as error:
         raise HTTPException(status_code=400, detail="Expected JSON with a state") from error
 
-    if not isinstance(body, dict) or not isinstance(body.get("state"), str):
-        raise HTTPException(status_code=400, detail="Expected state: RED, YELLOW, or GREEN")
+    if (
+        not isinstance(body, dict)
+        or not isinstance(body.get("checker_id"), str)
+        or not isinstance(body.get("state"), str)
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="Expected checker_id and state (RED or GREEN)",
+        )
 
     try:
-        result = await asyncio.to_thread(send_traffic_command, body["state"])
+        result = await asyncio.to_thread(
+            send_traffic_command,
+            body["checker_id"],
+            body["state"],
+        )
     except zmq.Again as error:
         raise HTTPException(status_code=503, detail="Traffic broker is unavailable") from error
 

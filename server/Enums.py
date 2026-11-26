@@ -2,7 +2,6 @@ from enum import Enum, auto
 
 class TrafficState(Enum):
     RED = auto()
-    YELLOW = auto()
     GREEN = auto()
 
 class ZoneType(Enum):

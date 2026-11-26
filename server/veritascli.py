@@ -38,12 +38,12 @@ args = parser.parse_args()
 
 if args.mode == "gather":
     print("READY:GATHER", flush=True)
-    capture_device = int(args.capture_device)
+    capture_device = args.capture_device
     outdir = args.outdir
     interval = int(args.interval)
     run_time = int(args.time)
 
-    cap = cv.VideoCapture(capture_device)
+    cap = open_camera(capture_device)
     fps = cap.get(cv.CAP_PROP_FPS)
     step = 1
     time_elapsed = 0
@@ -107,7 +107,7 @@ elif args.mode == "run":
 
     config = CAMERA_CONFIG[camera_type]
 
-    capture_device = int(args.capture_device)
+    capture_device = args.capture_device
     outdir = args.outdir
     interval = int(args.interval)
     time = int(args.time)
@@ -117,7 +117,7 @@ elif args.mode == "run":
     road_sections = args.road_sections_path
 
     # Camera
-    cap = cv.VideoCapture(capture_device)
+    cap = open_camera(capture_device)
 
     fps = cap.get(cv.CAP_PROP_FPS)
     if fps <= 0:
@@ -672,7 +672,7 @@ elif args.mode == "run":
 
 elif args.mode == "calibrate":
     filename = input("Perspective Warp Name: ") + ".npy"
-    capture_device = int(args.capture_device)
+    capture_device = args.capture_device
     outdir = args.outdir
     outfile = os.path.join(outdir, filename)
     source = args.source
@@ -685,7 +685,7 @@ elif args.mode == "calibrate":
         if event == cv.EVENT_LBUTTONDOWN:
             points.append([x, y])
 
-    cap = cv.VideoCapture(capture_device)
+    cap = open_camera(capture_device)
     while True:
         if len(points) >= 4: break
         ret, frame = cap.read()

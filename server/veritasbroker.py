@@ -25,6 +25,24 @@ CAPTURE_DIR.mkdir(parents=True, exist_ok=True)
 
 CAPTURE_URL_PREFIX = "/captures"
 
+TRAFFIC_CONFIG_PATH = Path(__file__).resolve().parent / "traffic_checkers.json"
+with TRAFFIC_CONFIG_PATH.open("r", encoding="utf-8") as traffic_config_file:
+    traffic_config = json.load(traffic_config_file)
+
+TRAFFIC_CHECKERS = traffic_config["checkers"]
+INTERSECTION_ZONE = traffic_config["intersection_zone"]
+TRAFFIC_CHECKERS_BY_ID = {checker["id"]: checker for checker in TRAFFIC_CHECKERS}
+ZONE_TO_TRAFFIC_CHECKER = {
+    zone_name: checker["id"]
+    for checker in TRAFFIC_CHECKERS
+    for zone_name in checker["approach_zones"]
+}
+
+if len(TRAFFIC_CHECKERS_BY_ID) != 3 or any(
+    len(checker["approach_zones"]) != 2 for checker in TRAFFIC_CHECKERS
+):
+    raise ValueError("traffic_checkers.json must define three checkers with two approach zones each")
+
 
 # ==========================================
 # ZMQ
@@ -64,28 +82,43 @@ foot_observations = {
 # Canonical ID -> evidence record
 license_plate_captures = {}
 
-traffic_output = TrafficOutput()
-traffic_state = traffic_output.set_state(TrafficState.RED)
+traffic_output = TrafficOutput(TRAFFIC_CHECKERS)
+traffic_states = {
+    checker_id: traffic_output.set_state(checker_id, TrafficState.RED)
+    for checker_id in TRAFFIC_CHECKERS_BY_ID
+}
+previous_zone_observations = {}
+topdown_snapshot_index = 0
 atexit.register(traffic_output.close)
 
 
-def set_traffic_state(state_name):
-
-    global traffic_state
-
-    next_state = TrafficState[str(state_name).strip().upper()]
-    traffic_output.set_state(next_state)
-    traffic_state = next_state
-
+def publish_traffic_states():
     state_pub.send_json({
         "type": "traffic_state",
-        "traffic_state": traffic_state.name
+        "traffic_states": {
+            checker_id: state.name
+            for checker_id, state in traffic_states.items()
+        },
+        "traffic_checkers": TRAFFIC_CHECKERS,
+        "intersection_zone": INTERSECTION_ZONE,
     })
 
-    print(f"[TRAFFIC] State changed to {traffic_state.name}")
+
+def set_traffic_state(checker_id, state_name):
+
+    if checker_id not in TRAFFIC_CHECKERS_BY_ID:
+        raise ValueError(f"Unknown traffic checker: {checker_id}")
+
+    next_state = TrafficState[str(state_name).strip().upper()]
+    traffic_output.set_state(checker_id, next_state)
+    traffic_states[checker_id] = next_state
+    publish_traffic_states()
+
+    print(f"[TRAFFIC] {checker_id} changed to {next_state.name}")
     return {
         "ok": True,
-        "traffic_state": traffic_state.name
+        "checker_id": checker_id,
+        "traffic_state": next_state.name,
     }
 
 
@@ -401,6 +434,44 @@ def determine_violation(leanbot):
     return leanbot.to_dict()
 
 
+def detect_red_light_running(leanbot_id, leanbot_data_item):
+    """Flag entry into the intersection from a red-controlled road."""
+    leanbot_id = str(leanbot_id)
+    zone = leanbot_data_item.get("current_zone") or {}
+    current_zone_name = zone.get("name") if isinstance(zone, dict) else None
+    previous = previous_zone_observations.get(leanbot_id)
+    triggered_checker = None
+
+    if current_zone_name == INTERSECTION_ZONE and previous is not None:
+        checker_id = ZONE_TO_TRAFFIC_CHECKER.get(previous["zone"])
+        observation_is_recent = topdown_snapshot_index - previous["snapshot"] <= 2
+        if (
+            observation_is_recent
+            and checker_id
+            and traffic_states[checker_id] == TrafficState.RED
+        ):
+            triggered_checker = checker_id
+
+    if current_zone_name:
+        previous_zone_observations[leanbot_id] = {
+            "zone": current_zone_name,
+            "snapshot": topdown_snapshot_index,
+        }
+    elif previous is not None and topdown_snapshot_index - previous["snapshot"] > 2:
+        previous_zone_observations.pop(leanbot_id, None)
+
+    if triggered_checker:
+        leanbot = Leanbot.from_dict(leanbot_data_item)
+        leanbot.add_violation(ViolationType.RUNNING_RED_LIGHT.name)
+        print(
+            f"[VIOLATION] Leanbot {leanbot_id} entered {INTERSECTION_ZONE} "
+            f"from {triggered_checker} while RED"
+        )
+        return leanbot.to_dict()
+
+    return leanbot_data_item
+
+
 # ==========================================
 # TOPDOWN HANDLER
 # ==========================================
@@ -409,6 +480,9 @@ def handle_topdown(identity, payload):
 
     global leanbot_data
     global topdown_positions
+    global topdown_snapshot_index
+
+    topdown_snapshot_index += 1
 
     incoming_data = json.loads(
         payload[0].decode("utf-8")
@@ -436,6 +510,7 @@ def handle_topdown(identity, payload):
 
     for key, leanbot in leanbot_data.items():
 
+        leanbot = detect_red_light_running(key, leanbot)
         updated = determine_violation(leanbot)
 
         # Preserve confirmed plate state.
@@ -471,7 +546,12 @@ def handle_topdown(identity, payload):
         "type": "state_snapshot",
         "source": "TOPDOWN",
         "leanbots": published_leanbots,
-        "traffic_state": traffic_state.name
+        "traffic_states": {
+            checker_id: state.name
+            for checker_id, state in traffic_states.items()
+        },
+        "traffic_checkers": TRAFFIC_CHECKERS,
+        "intersection_zone": INTERSECTION_ZONE,
     })
 
     # Return canonical state to TOPDOWN.
@@ -594,7 +674,10 @@ while True:
             if not isinstance(command, dict) or command.get("command") != "set_traffic_state":
                 raise ValueError("Expected command=set_traffic_state")
 
-            response = set_traffic_state(command.get("state", ""))
+            response = set_traffic_state(
+                command.get("checker_id", ""),
+                command.get("state", ""),
+            )
 
         except Exception as error:
             response = {"ok": False, "error": str(error)}

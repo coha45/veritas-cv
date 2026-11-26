@@ -1,0 +1,251 @@
+/* Adapt the legacy admin theme to the current React dashboard components. */
+:root {
+  color-scheme: dark;
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
+body {
+  display: block;
+  background: var(--bg);
+  color: var(--ink);
+}
+
+#root > div {
+  min-height: 100vh;
+  background: var(--bg);
+}
+
+/* The old stylesheet includes a fixed, icon-only sidebar. Keep the current
+   responsive, collapsible sidebar layout instead. */
+aside[aria-label="Main navigation"] {
+  position: sticky;
+  inset: auto;
+  height: 100vh;
+  border: 0;
+  border-right: 1px solid var(--line);
+  border-radius: 0;
+  background: var(--panel);
+  padding: 0.5rem;
+  overflow: visible;
+  transform: none;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+/* Keep the existing Tailwind layout while switching its light palette to the
+   colors supplied by admin.css. */
+[class~="bg-white"] { background-color: var(--panel) !important; }
+[class~="bg-slate-50"], [class~="bg-slate-100"] { background-color: var(--p2) !important; }
+[class~="bg-slate-200"] { background-color: #303a3e !important; }
+[class~="bg-cyan-50"], [class~="bg-cyan-50/70"] { background-color: rgba(76, 195, 138, 0.1) !important; }
+[class~="bg-emerald-50"], [class~="bg-emerald-100"] { background-color: rgba(76, 195, 138, 0.16) !important; }
+[class~="bg-rose-50"], [class~="bg-rose-100"] { background-color: rgba(229, 89, 106, 0.15) !important; }
+[class~="text-slate-950"], [class~="text-slate-900"], [class~="text-slate-800"] { color: var(--ink) !important; }
+[class~="text-slate-700"], [class~="text-slate-600"], [class~="text-slate-500"], [class~="text-slate-400"] { color: var(--mut) !important; }
+[class~="text-cyan-700"], [class~="text-cyan-950"] { color: var(--g) !important; }
+[class~="text-emerald-800"], [class~="text-emerald-700"] { color: var(--g) !important; }
+[class~="text-rose-800"], [class~="text-rose-700"] { color: var(--r) !important; }
+[class~="text-amber-800"] { color: var(--o) !important; }
+[class~="border-slate-100"], [class~="border-slate-200"], [class~="border-slate-300"] { border-color: var(--line) !important; }
+[class~="border-cyan-100"] { border-color: rgba(76, 195, 138, 0.3) !important; }
+[class~="border-emerald-200"] { border-color: rgba(76, 195, 138, 0.4) !important; }
+[class~="border-rose-200"] { border-color: rgba(229, 89, 106, 0.4) !important; }
+[class~="divide-slate-100"] > :not(:last-child) { border-color: var(--line) !important; }
+
+.traffic-state {
+  display: flex;
+  min-height: 44px;
+  align-items: center;
+  justify-content: center;
+  gap: 0.6rem;
+  border: 1px solid var(--line);
+  border-radius: 0.75rem;
+  background: var(--p2);
+  color: var(--mut);
+  font-size: 0.75rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  transition: border-color 150ms ease, background-color 150ms ease, color 150ms ease, box-shadow 150ms ease;
+}
+
+.traffic-state:not(:disabled) { cursor: pointer; }
+.traffic-state:not(:disabled):hover { border-color: #536166; color: var(--ink); }
+.traffic-state__lamp {
+  width: 0.7rem;
+  height: 0.7rem;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: #465054;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.12);
+}
+.traffic-state--red.is-active {
+  border-color: rgba(229, 89, 106, 0.7);
+  background: rgba(229, 89, 106, 0.14);
+  color: #ff9aa5;
+  box-shadow: 0 0 18px rgba(229, 89, 106, 0.12);
+}
+.traffic-state--red.is-active .traffic-state__lamp {
+  background: #f05263;
+  box-shadow: 0 0 10px rgba(240, 82, 99, 0.8);
+}
+.traffic-state--green.is-active {
+  border-color: rgba(76, 195, 138, 0.7);
+  background: rgba(76, 195, 138, 0.13);
+  color: #83e1b4;
+  box-shadow: 0 0 18px rgba(76, 195, 138, 0.12);
+}
+.traffic-state--green.is-active .traffic-state__lamp {
+  background: #4cc38a;
+  box-shadow: 0 0 10px rgba(76, 195, 138, 0.8);
+}
+
+aside[aria-label="Main navigation"] a[aria-label] {
+  color: var(--mut);
+}
+
+/* admin.css hides labels unless the old `aside.ex` class is present. The
+   React sidebar controls visibility by rendering labels only when expanded. */
+aside[aria-label="Main navigation"] a span {
+  opacity: 1;
+}
+
+aside[aria-label="Main navigation"] a[aria-label]:hover {
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+aside[aria-label="Main navigation"] a[aria-current="page"] {
+  color: var(--ink);
+  background: rgba(76, 195, 138, 0.12);
+  border-left: 3px solid var(--g);
+}
+
+main, section {
+  color: inherit;
+}
+
+table {
+  color: var(--ink);
+}
+
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+@media (max-width: 640px) {
+  aside[aria-label="Main navigation"] {
+    position: sticky;
+    inset: auto;
+    height: auto;
+    min-height: 100vh;
+    transform: none;
+  }
+}
+
+/* Explicit sidebar styling overrides the legacy admin.css aside dimensions. */
+.veritas-sidebar {
+  --sidebar-width: 76px;
+  position: sticky !important;
+  top: 0 !important;
+  left: auto !important;
+  right: auto !important;
+  bottom: auto !important;
+  z-index: 10 !important;
+  display: flex !important;
+  flex: 0 0 var(--sidebar-width) !important;
+  width: var(--sidebar-width) !important;
+  height: 100vh !important;
+  min-height: 100vh;
+  align-items: center;
+  gap: 1rem !important;
+  overflow: hidden !important;
+  padding: 0.85rem 0.65rem !important;
+  border: 0 !important;
+  border-right: 1px solid var(--line) !important;
+  border-radius: 0 !important;
+  background: #111719 !important;
+  box-shadow: 8px 0 28px rgba(0, 0, 0, 0.22) !important;
+  transition: width 220ms ease, flex-basis 220ms ease !important;
+}
+.veritas-sidebar.is-expanded {
+  --sidebar-width: 248px;
+}
+.sidebar-header {
+  display: flex;
+  width: 100%;
+  min-height: 48px;
+  align-items: center;
+  gap: 0.65rem;
+}
+.sidebar-logo {
+  width: 146px;
+  max-height: 44px;
+  object-fit: contain;
+}
+.sidebar-toggle {
+  display: grid;
+  width: 44px;
+  height: 44px;
+  flex: 0 0 44px;
+  place-items: center;
+  border: 1px solid #3b484c;
+  border-radius: 12px;
+  background: #202a2e;
+  color: #f4f7f6;
+  cursor: pointer;
+  transition: background 150ms ease, border-color 150ms ease;
+}
+.sidebar-toggle:hover { background: #2b383c; border-color: #58696e; }
+.sidebar-toggle svg { width: 18px; height: 18px; fill: currentColor !important; stroke: none !important; }
+.sidebar-list {
+  display: flex;
+  width: 100%;
+  flex-direction: column;
+  gap: 0.45rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.sidebar-link {
+  display: flex !important;
+  width: 100% !important;
+  min-height: 48px !important;
+  align-items: center;
+  gap: 0.85rem !important;
+  padding: 0 0.75rem !important;
+  border: 1px solid transparent !important;
+  border-radius: 12px !important;
+  background: transparent;
+  color: #bac6c8 !important;
+  text-decoration: none;
+  transition: background 150ms ease, color 150ms ease, border-color 150ms ease;
+}
+.sidebar-link.is-collapsed { justify-content: center; padding: 0 !important; }
+.sidebar-link:hover { background: #222d31 !important; color: #fff !important; }
+.sidebar-link[aria-current="page"] {
+  border-color: rgba(76, 195, 138, 0.38) !important;
+  background: rgba(76, 195, 138, 0.16) !important;
+  color: #78e0ad !important;
+}
+.sidebar-icon {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  flex: 0 0 30px;
+  place-items: center;
+  border-radius: 9px;
+  background: #303d42;
+  color: #dce7e6;
+}
+.sidebar-icon svg { width: 18px; height: 18px; fill: currentColor !important; stroke: none !important; }
+.sidebar-label { color: inherit; font-size: 0.9rem; font-weight: 650; white-space: nowrap; }
+@media (max-width: 640px) {
+  .veritas-sidebar { --sidebar-width: 64px; padding-inline: 0.5rem !important; }
+  .veritas-sidebar.is-expanded { --sidebar-width: 220px; }
+}

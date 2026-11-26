@@ -16,24 +16,26 @@ function StatusPill({ connected }) {
 const Dashboard = () => {
   const {
     leanbots,
-    trafficState,
+    trafficStates,
+    trafficCheckers,
+    intersectionZone,
     connected,
     frames,
     footSnapshot,
     setTrafficState
   } = useVeritas()
-  const [pendingTrafficState, setPendingTrafficState] = useState(null)
+  const [pendingTrafficChecker, setPendingTrafficChecker] = useState(null)
   const [trafficError, setTrafficError] = useState('')
 
-  const updateTrafficState = async (state) => {
-    setPendingTrafficState(state)
+  const updateTrafficState = async (checkerId, state) => {
+    setPendingTrafficChecker(checkerId)
     setTrafficError('')
     try {
-      await setTrafficState(state)
+      await setTrafficState(checkerId, state)
     } catch (error) {
       setTrafficError(error.message)
     } finally {
-      setPendingTrafficState(null)
+      setPendingTrafficChecker(null)
     }
   }
 
@@ -55,29 +57,66 @@ const Dashboard = () => {
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <StatusPill connected={connected} />
-            <div className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-sm text-slate-600 shadow-sm">
-              Traffic: <span className="font-semibold text-slate-900">{trafficState ?? 'Unknown'}</span>
-            </div>
-            <div className="join" role="group" aria-label="Set traffic state">
-              {['RED', 'YELLOW', 'GREEN'].map(state => (
-                <button
-                  key={state}
-                  type="button"
-                  className={`join-item btn btn-sm ${trafficState === state ? 'btn-neutral' : 'btn-outline'}`}
-                  disabled={!connected || pendingTrafficState !== null}
-                  aria-pressed={trafficState === state}
-                  onClick={() => updateTrafficState(state)}
-                >
-                  {pendingTrafficState === state ? 'Setting…' : state}
-                </button>
-              ))}
-            </div>
           </div>
         </header>
 
         {trafficError && (
           <p role="alert" className="-mt-5 text-sm text-rose-700">Traffic state update failed: {trafficError}</p>
         )}
+
+        <section className="space-y-3" aria-label="Traffic signal controls">
+          <div>
+            <h2 className="text-xl font-bold text-slate-900">Road signal controls</h2>
+            <p className="text-sm text-slate-500">
+              Each controller covers its two approach lanes and checks entry into {intersectionZone ?? 'the intersection'}.
+            </p>
+          </div>
+          <div className="grid grid-cols-1 gap-3 lg:grid-cols-3">
+            {trafficCheckers.map(checker => {
+              const activeState = trafficStates[checker.id] ?? 'RED'
+              const gpioPins = checker.gpio_pins ?? []
+              const ledPattern = { RED: '10', GREEN: '01' }[activeState]
+              return (
+                <article key={checker.id} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <h3 className="font-bold text-slate-900">{checker.label}</h3>
+                      <p className="mt-1 text-xs text-slate-500">
+                        {checker.approach_zones?.join(' + ')}
+                      </p>
+                    </div>
+                    <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-700">
+                      {activeState}
+                    </span>
+                  </div>
+                  <p className="mt-3 text-xs text-slate-500">
+                    LED A / LED B: {ledPattern} · BCM GPIO {gpioPins.join(' / ')}
+                  </p>
+                  <div className="mt-3 grid grid-cols-2 gap-2" role="group" aria-label={`${checker.label} signal state`}>
+                    {['RED', 'GREEN'].map(state => {
+                      const isActive = activeState === state
+                      const signalColor = state.toLowerCase()
+                      return (
+                      <button
+                        key={state}
+                        type="button"
+                        className={`traffic-state traffic-state--${signalColor}${isActive ? ' is-active' : ''}`}
+                        disabled={!connected || pendingTrafficChecker === checker.id}
+                        aria-pressed={isActive}
+                        aria-label={`${state} light for ${checker.label}`}
+                        onClick={() => updateTrafficState(checker.id, state)}
+                      >
+                        <span className="traffic-state__lamp" aria-hidden="true" />
+                        <span>{pendingTrafficChecker === checker.id ? 'Updating…' : state}</span>
+                      </button>
+                      )
+                    })}
+                  </div>
+                </article>
+              )
+            })}
+          </div>
+        </section>
 
         <section className="grid grid-cols-1 gap-3 sm:grid-cols-3" aria-label="Live summary">
           <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">

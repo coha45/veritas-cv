@@ -6,6 +6,7 @@ import {
   useRef,
   useState
 } from "react";
+import { defaultTrafficCheckers } from "../data/trafficCheckers";
 
 const VeritasContext = createContext(null);
 const apiOrigin = `${window.location.protocol === "https:" ? "https:" : "http:"}//${window.location.hostname || "127.0.0.1"}:8000`;
@@ -17,7 +18,11 @@ export function VeritasProvider({ children }) {
   // ==========================================
 
   const [leanbots, setLeanbots] = useState([]);
-  const [trafficState, setTrafficStateValue] = useState(null);
+  const [trafficStates, setTrafficStates] = useState(() =>
+    Object.fromEntries(defaultTrafficCheckers.map(checker => [checker.id, "RED"]))
+  );
+  const [trafficCheckers, setTrafficCheckers] = useState(defaultTrafficCheckers);
+  const [intersectionZone, setIntersectionZone] = useState("main_intersection");
   const [connected, setConnected] = useState(false);
   const [footSnapshot, setFootSnapshot] = useState(null);
 
@@ -67,7 +72,13 @@ export function VeritasProvider({ children }) {
           if (message.type === "state_snapshot") {
 
             setLeanbots(Array.isArray(message.leanbots) ? message.leanbots : []);
-            setTrafficStateValue(message.traffic_state);
+            setTrafficStates(message.traffic_states ?? {});
+            if (message.traffic_checkers?.length) {
+              setTrafficCheckers(message.traffic_checkers);
+            }
+            if (message.intersection_zone) {
+              setIntersectionZone(message.intersection_zone);
+            }
 
           }
 
@@ -76,7 +87,13 @@ export function VeritasProvider({ children }) {
           }
 
           else if (message.type === "traffic_state") {
-            setTrafficStateValue(message.traffic_state);
+            setTrafficStates(message.traffic_states ?? {});
+            if (message.traffic_checkers?.length) {
+              setTrafficCheckers(message.traffic_checkers);
+            }
+            if (message.intersection_zone) {
+              setIntersectionZone(message.intersection_zone);
+            }
           }
 
           else if (message.type === "frame") {
@@ -173,17 +190,20 @@ export function VeritasProvider({ children }) {
 
   }, []);
 
-  const setTrafficState = async (state) => {
+  const setTrafficState = async (checkerId, state) => {
     const response = await fetch(`${apiOrigin}/api/traffic-state`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ state }),
+      body: JSON.stringify({ checker_id: checkerId, state }),
     });
     const result = await response.json();
     if (!response.ok) {
       throw new Error(result.detail || "Could not update traffic state");
     }
-    setTrafficStateValue(result.traffic_state);
+    setTrafficStates(previous => ({
+      ...previous,
+      [checkerId]: result.traffic_state,
+    }));
     return result.traffic_state;
   };
 
@@ -195,7 +215,9 @@ export function VeritasProvider({ children }) {
     <VeritasContext.Provider
       value={{
         leanbots,
-        trafficState,
+        trafficStates,
+        trafficCheckers,
+        intersectionZone,
         connected,
         frames,
         footSnapshot,

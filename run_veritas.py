@@ -38,8 +38,16 @@ def main():
     parser = argparse.ArgumentParser(
         description="Run the Veritas server, two cameras, and web client."
     )
-    parser.add_argument("--topdown-camera", default="0", help="OpenCV device index (default: 0)")
-    parser.add_argument("--foot-camera", default="1", help="OpenCV device index (default: 1)")
+    parser.add_argument(
+        "--topdown-camera",
+        default="0",
+        help="Camera index, Linux /dev/video path, or 'picamera2' (default: 0)",
+    )
+    parser.add_argument(
+        "--foot-camera",
+        default="1",
+        help="Camera index, Linux /dev/video path, or 'picamera2' (default: 1)",
+    )
     parser.add_argument(
         "--topdown-model",
         default="server/models/best.pt",
@@ -73,11 +81,8 @@ def main():
     parser.add_argument(
         "--gpio",
         action="store_true",
-        help="Enable Raspberry Pi GPIO output for a three-light demo module",
+        help="Enable the six GPIO outputs assigned in server/traffic_checkers.json",
     )
-    parser.add_argument("--red-pin", type=int, help="BCM GPIO pin for red")
-    parser.add_argument("--yellow-pin", type=int, help="BCM GPIO pin for yellow")
-    parser.add_argument("--green-pin", type=int, help="BCM GPIO pin for green")
     parser.add_argument(
         "--gpio-active-low",
         action="store_true",
@@ -87,17 +92,8 @@ def main():
 
     broker_environment = os.environ.copy()
     if args.gpio:
-        gpio_pins = [args.red_pin, args.yellow_pin, args.green_pin]
-        if any(pin is None for pin in gpio_pins):
-            parser.error("--gpio requires --red-pin, --yellow-pin, and --green-pin")
-        if len(set(gpio_pins)) != 3:
-            parser.error("Red, yellow, and green GPIO pins must be different")
-
         broker_environment.update({
             "VERITAS_GPIO": "1",
-            "VERITAS_RED_PIN": str(args.red_pin),
-            "VERITAS_YELLOW_PIN": str(args.yellow_pin),
-            "VERITAS_GREEN_PIN": str(args.green_pin),
             "VERITAS_GPIO_ACTIVE_HIGH": "0" if args.gpio_active_low else "1",
         })
 

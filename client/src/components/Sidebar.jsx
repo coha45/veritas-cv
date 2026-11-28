@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { clsx } from 'clsx'
 import { NavLink } from 'react-router-dom'
-import { FaArrowRightLong, FaDatabase, FaRegEye } from 'react-icons/fa6'
+import { FaArrowRightLong, FaCarSide, FaDatabase, FaRegEye } from 'react-icons/fa6'
 import { MdDashboard } from 'react-icons/md'
 
 import logo from '../assets/logo.svg'
@@ -21,6 +21,11 @@ const navLinks = [
     title: 'Database',
     url: '/database',
     icon: <FaDatabase aria-hidden="true" />,
+  },
+  {
+    title: 'Driver Portal',
+    url: '/portal?page=index',
+    icon: <FaCarSide aria-hidden="true" />,
   },
 ]
 

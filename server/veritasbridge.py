@@ -17,6 +17,7 @@ import av
 import cv2 as cv
 from aiortc import RTCPeerConnection, RTCSessionDescription, VideoStreamTrack
 from database import append_approved_violations, get_plate_image, initialize, list_records, save_approved, update_plate
+import portal_database as portal_db
 
 
 # ==========================================
@@ -250,6 +251,7 @@ async def lifespan(app: FastAPI):
 
     broadcast_lock = asyncio.Lock()
     initialize()
+    portal_db.initialize()
     camera_frame_events.clear()
     camera_frame_events.update({camera_id: asyncio.Event() for camera_id in latest_camera_frames})
 
@@ -287,8 +289,8 @@ app.add_middleware(
         "http://localhost:5173",
     ],
     allow_origin_regex=r"^http://(127\.0\.0\.1|localhost|10(?:\.\d{1,3}){3}|192\.168(?:\.\d{1,3}){2}|172\.(?:1[6-9]|2\d|3[01])(?:\.\d{1,3}){2}):[0-9]+$",
-    allow_methods=["GET", "POST", "PATCH"],
-    allow_headers=["Content-Type"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
+    allow_headers=["Content-Type", "Authorization"],
 )
 
 # Serve plate evidence saved by veritasbroker.py at the same URL prefix
@@ -304,6 +306,221 @@ app.mount(
 @app.get("/api/database/leanbots")
 async def get_leanbot_records():
     return {"records": list_records()}
+
+
+def _portal_identity(request: Request, admin=False):
+    authorization = request.headers.get("authorization", "")
+    scheme, _, token = authorization.partition(" ")
+    user = portal_db.authenticate(token if scheme.lower() == "bearer" else "")
+    if user is None:
+        raise HTTPException(status_code=401, detail="Sign in to continue")
+    if admin and user["role"] != "admin":
+        raise HTTPException(status_code=403, detail="Portal administrator access is required")
+    return token, user
+
+
+async def _portal_json(request: Request):
+    try:
+        body = await request.json()
+    except Exception as error:
+        raise HTTPException(status_code=400, detail="Expected a JSON request") from error
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="Expected a JSON object")
+    return body
+
+
+@app.post("/api/portal/auth/signup")
+async def portal_signup(request: Request):
+    body = await _portal_json(request)
+    try:
+        token, user = await asyncio.to_thread(
+            portal_db.signup, body.get("email"), body.get("password"),
+            body.get("first_name"), body.get("last_name"), body.get("phone", ""),
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    return {"token": token, "user": user}
+
+
+@app.post("/api/portal/auth/login")
+async def portal_login(request: Request):
+    body = await _portal_json(request)
+    try:
+        token, user = await asyncio.to_thread(portal_db.login, body.get("email"), body.get("password"))
+    except ValueError as error:
+        raise HTTPException(status_code=401, detail=str(error)) from error
+    return {"token": token, "user": user}
+
+
+@app.post("/api/portal/auth/logout")
+async def portal_logout(request: Request):
+    token, _ = _portal_identity(request)
+    await asyncio.to_thread(portal_db.logout, token)
+    return {"ok": True}
+
+
+@app.get("/api/portal/me")
+async def portal_me(request: Request):
+    _, user = _portal_identity(request)
+    return {"user": user}
+
+
+@app.patch("/api/portal/me/profile")
+async def portal_update_profile(request: Request):
+    _, user = _portal_identity(request)
+    body = await _portal_json(request)
+    try:
+        updated = await asyncio.to_thread(
+            portal_db.update_profile, user["id"], body.get("first_name"),
+            body.get("last_name"), body.get("phone", ""),
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    return {"user": updated}
+
+
+@app.post("/api/portal/me/password")
+async def portal_change_password(request: Request):
+    _, user = _portal_identity(request)
+    body = await _portal_json(request)
+    try:
+        token = await asyncio.to_thread(
+            portal_db.change_password, user["id"], body.get("current_password"), body.get("new_password"),
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    return {"token": token}
+
+
+@app.get("/api/portal/me/vehicles")
+async def portal_vehicles(request: Request):
+    _, user = _portal_identity(request)
+    vehicles = await asyncio.to_thread(portal_db.list_vehicles, user["id"])
+    return {"vehicles": vehicles}
+
+
+@app.post("/api/portal/me/vehicles")
+async def portal_add_vehicle(request: Request):
+    _, user = _portal_identity(request)
+    body = await _portal_json(request)
+    try:
+        vehicle = await asyncio.to_thread(portal_db.add_vehicle, user["id"], body)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    return {"vehicle": vehicle}
+
+
+@app.delete("/api/portal/me/vehicles/{vehicle_id}")
+async def portal_remove_vehicle(vehicle_id: str, request: Request):
+    _, user = _portal_identity(request)
+    removed = await asyncio.to_thread(portal_db.remove_vehicle, user["id"], vehicle_id)
+    if not removed:
+        raise HTTPException(status_code=404, detail="Vehicle record not found")
+    return {"ok": True}
+
+
+@app.get("/api/portal/me/violations")
+async def portal_violations(request: Request):
+    _, user = _portal_identity(request)
+    violations = await asyncio.to_thread(portal_db.user_violations, user["id"])
+    return {"violations": violations}
+
+
+@app.post("/api/portal/me/disputes")
+async def portal_create_dispute(request: Request):
+    _, user = _portal_identity(request)
+    body = await _portal_json(request)
+    try:
+        dispute = await asyncio.to_thread(
+            portal_db.create_dispute, user["id"], body.get("leanbot_id"),
+            body.get("violation_type"), body.get("reason"),
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    return {"dispute": dispute}
+
+
+@app.get("/api/portal/me/payments")
+async def portal_payments(request: Request):
+    _portal_identity(request)
+    return {"payments": []}
+
+
+@app.get("/api/portal/admin/vehicles")
+async def portal_admin_vehicles(request: Request, status: str = "pending"):
+    _portal_identity(request, admin=True)
+    vehicles = await asyncio.to_thread(portal_db.admin_vehicles, status)
+    return {"vehicles": vehicles}
+
+
+@app.post("/api/portal/admin/vehicles/{vehicle_id}/decision")
+async def portal_admin_vehicle_decision(vehicle_id: str, request: Request):
+    _, user = _portal_identity(request, admin=True)
+    body = await _portal_json(request)
+    try:
+        vehicle = await asyncio.to_thread(
+            portal_db.decide_vehicle, user["id"], vehicle_id, body.get("decision"), body.get("remarks", ""),
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    if vehicle is None:
+        raise HTTPException(status_code=404, detail="Vehicle application not found")
+    return {"vehicle": vehicle}
+
+
+@app.get("/api/portal/admin/unassigned-violations")
+async def portal_admin_unassigned_violations(request: Request):
+    _portal_identity(request, admin=True)
+    violations = await asyncio.to_thread(portal_db.unassigned_violations)
+    return {"violations": violations}
+
+
+@app.get("/api/portal/admin/disputes")
+async def portal_admin_disputes(request: Request):
+    _portal_identity(request, admin=True)
+    disputes = await asyncio.to_thread(portal_db.admin_disputes)
+    return {"disputes": disputes}
+
+
+@app.patch("/api/portal/admin/disputes/{dispute_id}")
+async def portal_admin_decide_dispute(dispute_id: str, request: Request):
+    _, user = _portal_identity(request, admin=True)
+    body = await _portal_json(request)
+    try:
+        dispute = await asyncio.to_thread(
+            portal_db.decide_dispute, user["id"], dispute_id,
+            body.get("status"), body.get("staff_note", ""),
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    if dispute is None:
+        raise HTTPException(status_code=404, detail="Dispute not found")
+    return {"dispute": dispute}
+
+
+@app.get("/api/portal/admin/fines")
+async def portal_admin_fines(request: Request):
+    _portal_identity(request, admin=True)
+    return {"fines": await asyncio.to_thread(portal_db.list_fines)}
+
+
+@app.put("/api/portal/admin/fines")
+async def portal_admin_set_fine(request: Request):
+    _portal_identity(request, admin=True)
+    body = await _portal_json(request)
+    try:
+        fine = await asyncio.to_thread(
+            portal_db.set_fine, body.get("violation_type"), body.get("amount"), body.get("currency", "PHP"),
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    return {"fine": fine}
+
+
+@app.get("/api/portal/admin/payments")
+async def portal_admin_payments(request: Request):
+    _portal_identity(request, admin=True)
+    return {"payments": []}
 
 
 @app.get("/api/database/leanbots/{leanbot_id}/plate-image")

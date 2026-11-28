@@ -8,57 +8,13 @@ import time
 import json
 
 
-class _Picamera2Capture:
-    """Small VideoCapture-compatible adapter for Raspberry Pi Camera modules."""
-
-    def __init__(self, fps=30):
-        try:
-            from picamera2 import Picamera2
-        except ImportError as error:
-            raise RuntimeError(
-                "The 'picamera2' source needs Picamera2 installed on Raspberry Pi OS. "
-                "Install it with: sudo apt install python3-picamera2"
-            ) from error
-
-        self.fps = fps
-        self.camera = Picamera2()
-        config = self.camera.create_video_configuration(
-            main={"size": (1280, 720), "format": "BGR888"},
-            controls={"FrameRate": fps},
-        )
-        self.camera.configure(config)
-        self.camera.start()
-
-    def read(self):
-        try:
-            return True, self.camera.capture_array()
-        except Exception as error:
-            print(f"[CAMERA] Picamera2 capture failed: {error}", flush=True)
-            return False, None
-
-    def get(self, property_id):
-        if property_id == cv.CAP_PROP_FPS:
-            return float(self.fps)
-        return 0.0
-
-    def release(self):
-        self.camera.stop()
-        self.camera.close()
-
-
 def open_camera(source=0):
-    """Open a USB/webcam source across Windows and Linux, or Pi Camera via Picamera2.
+    """Open a USB/webcam source across Windows and Linux.
 
     Numeric strings are treated as device indexes. Linux device paths such as
-    /dev/video0 are accepted, and the special source ``picamera2`` selects the
-    Raspberry Pi Camera module interface.
+    /dev/video0 are accepted; Linux sources are requested in YUYV format.
     """
     source_text = str(source).strip()
-    if source_text.lower() in {"picamera2", "picamera"}:
-        if platform.system() != "Linux":
-            raise RuntimeError("The picamera2 source is only available on Raspberry Pi OS/Linux")
-        return _Picamera2Capture()
-
     device = int(source_text) if source_text.isdecimal() else source
     system = platform.system()
     if system == "Windows":
@@ -72,6 +28,19 @@ def open_camera(source=0):
     for backend in backends:
         capture = cv.VideoCapture(device, backend)
         if capture.isOpened():
+            if system == "Linux":
+                yuyv = cv.VideoWriter_fourcc(*"YUYV")
+                format_set = capture.set(cv.CAP_PROP_FOURCC, yuyv)
+                actual_fourcc = int(capture.get(cv.CAP_PROP_FOURCC))
+                actual_format = "".join(
+                    chr((actual_fourcc >> (8 * index)) & 0xFF)
+                    for index in range(4)
+                )
+                print(
+                    f"[CAMERA] Requested YUYV on {source_text}; "
+                    f"accepted={format_set}, reported={actual_format or 'unknown'}",
+                    flush=True,
+                )
             capture.set(cv.CAP_PROP_BUFFERSIZE, 1)
             backend_name = capture.getBackendName() if hasattr(capture, "getBackendName") else str(backend)
             print(f"[CAMERA] Opened source {source_text} with {backend_name}", flush=True)

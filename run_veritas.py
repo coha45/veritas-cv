@@ -41,12 +41,12 @@ def main():
     parser.add_argument(
         "--topdown-camera",
         default="1",
-        help="Camera index, Linux /dev/video path, or 'picamera2' (default: 1)",
+        help="USB camera index or Linux /dev/video path (default: 1)",
     )
     parser.add_argument(
         "--foot-camera",
         default="2",
-        help="Camera index, Linux /dev/video path, or 'picamera2' (default: 0)",
+        help="USB camera index or Linux /dev/video path (default: 0)",
     )
     parser.add_argument(
         "--topdown-model",

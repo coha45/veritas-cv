@@ -45,7 +45,7 @@ def main():
     )
     parser.add_argument(
         "--foot-camera",
-        default="0",
+        default="2",
         help="Camera index, Linux /dev/video path, or 'picamera2' (default: 0)",
     )
     parser.add_argument(
@@ -60,13 +60,19 @@ def main():
     )
     parser.add_argument(
         "--topdown-warp",
-        default="server/tests/topdown.npy",
+        default="server/warps/topdown.npy",
         help="Optional TOPDOWN perspective warp matrix",
     )
     parser.add_argument(
         "--foot-warp",
-        default="server/tests/foot.npy",
-        help="FOOT-to-TOPDOWN warp matrix used for Leanbot matching",
+        default="server/warps/foot.npy",
+        help="FOOT-to-TOPDOWN warp  used for Leanbot matching",
+    )
+    parser.add_argument(
+        "--speed-limit-cm-s",
+        type=float,
+        default=30.0,
+        help="TOPDOWN speeding threshold in cm/s (default: 30)",
     )
     parser.add_argument(
         "--road-sections",
@@ -133,6 +139,7 @@ def main():
         "--capture_device", str(args.topdown_camera),
         "--model", str(topdown_model),
         "--road_sections_path", str(road_sections),
+        "--speed-limit-cm-s", str(args.speed_limit_cm_s),
     ]
     if topdown_warp is not None:
         topdown_command.extend(["--warp_matrix_path", str(topdown_warp)])

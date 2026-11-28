@@ -26,22 +26,32 @@ CAPTURE_DIR.mkdir(parents=True, exist_ok=True)
 CAPTURE_URL_PREFIX = "/captures"
 
 TRAFFIC_CONFIG_PATH = Path(__file__).resolve().parent / "traffic_checkers.json"
-with TRAFFIC_CONFIG_PATH.open("r", encoding="utf-8") as traffic_config_file:
-    traffic_config = json.load(traffic_config_file)
+try:
+    with TRAFFIC_CONFIG_PATH.open("r", encoding="utf-8") as traffic_config_file:
+        traffic_config = json.load(traffic_config_file) if TRAFFIC_CONFIG_PATH.stat().st_size else {}
+except json.JSONDecodeError:
+    traffic_config = {}
 
-TRAFFIC_CHECKERS = traffic_config["checkers"]
-INTERSECTION_ZONE = traffic_config["intersection_zone"]
+TRAFFIC_CHECKERS = traffic_config.get("checkers", [])
+INTERSECTION_ZONE = traffic_config.get("intersection_zone", "main_intersection")
 TRAFFIC_CHECKERS_BY_ID = {checker["id"]: checker for checker in TRAFFIC_CHECKERS}
 ZONE_TO_TRAFFIC_CHECKER = {
     zone_name: checker["id"]
     for checker in TRAFFIC_CHECKERS
+    if checker.get("type", "road") == "road"
     for zone_name in checker["approach_zones"]
 }
 
-if len(TRAFFIC_CHECKERS_BY_ID) != 3 or any(
-    len(checker["approach_zones"]) != 2 for checker in TRAFFIC_CHECKERS
+road_checkers = [checker for checker in TRAFFIC_CHECKERS if checker.get("type", "road") == "road"]
+pedestrian_checkers = [checker for checker in TRAFFIC_CHECKERS if checker.get("type") == "pedestrian"]
+if TRAFFIC_CHECKERS and (
+    len(TRAFFIC_CHECKERS_BY_ID) != 2 + len(pedestrian_checkers)
+    or len(road_checkers) != 2
+    or len(pedestrian_checkers) > 1
+    or any(not checker["approach_zones"] for checker in road_checkers)
+    or any(not checker["approach_zones"] for checker in pedestrian_checkers)
 ):
-    raise ValueError("traffic_checkers.json must define three checkers with two approach zones each")
+    raise ValueError("When configured, traffic_checkers.json must define two road checkers and optionally one pedestrian checker, each with at least one zone")
 
 
 # ==========================================
@@ -71,6 +81,8 @@ print(f"[BROKER] Capture directory: {CAPTURE_DIR}")
 
 leanbot_data = {}
 topdown_positions = {}
+topdown_bboxes = {}
+previous_topdown_bboxes = {}
 
 foot_observations = {
     "frame": None,
@@ -472,6 +484,60 @@ def detect_red_light_running(leanbot_id, leanbot_data_item):
     return leanbot_data_item
 
 
+def detect_vehicle_collisions(leanbot_data, bboxes):
+    """Flag a moving Leanbot whose bounding box collides with another track."""
+    global previous_topdown_bboxes
+    ids = [str(track_id) for track_id in bboxes if str(track_id) in leanbot_data]
+    current_boxes = {track_id: bboxes[track_id] for track_id in ids}
+
+    def center(box):
+        return ((box[0] + box[2]) / 2, (box[1] + box[3]) / 2)
+
+    def overlap_ratio(first, second):
+        ix1, iy1 = max(first[0], second[0]), max(first[1], second[1])
+        ix2, iy2 = min(first[2], second[2]), min(first[3], second[3])
+        intersection = max(0, ix2 - ix1) * max(0, iy2 - iy1)
+        area_a = max(0, first[2] - first[0]) * max(0, first[3] - first[1])
+        area_b = max(0, second[2] - second[0]) * max(0, second[3] - second[1])
+        union = area_a + area_b - intersection
+        return intersection / union if union > 0 else 0
+
+    for index, first_id in enumerate(ids):
+        for second_id in ids[index + 1:]:
+            first_box, second_box = current_boxes[first_id], current_boxes[second_id]
+            previous_first = previous_topdown_bboxes.get(first_id)
+            previous_second = previous_topdown_bboxes.get(second_id)
+            if not previous_first or not previous_second or overlap_ratio(first_box, second_box) < 0.1:
+                continue
+
+            first_now, second_now = center(first_box), center(second_box)
+            first_before, second_before = center(previous_first), center(previous_second)
+            distance_now = math.dist(first_now, second_now)
+            distance_before = math.dist(first_before, second_before)
+            if distance_now >= distance_before:
+                continue
+
+            moving_into = []
+            for track_id, now, before, other in (
+                (first_id, first_now, first_before, second_now),
+                (second_id, second_now, second_before, first_now),
+            ):
+                speed = float(leanbot_data[track_id].get("speed") or 0)
+                movement = (now[0] - before[0], now[1] - before[1])
+                toward_other = (other[0] - now[0], other[1] - now[1])
+                if speed >= 8 and movement[0] * toward_other[0] + movement[1] * toward_other[1] > 0:
+                    moving_into.append(track_id)
+
+            for track_id in moving_into:
+                leanbot = Leanbot.from_dict(leanbot_data[track_id])
+                leanbot.add_violation(ViolationType.VEHICLE_COLLISION.name)
+                leanbot_data[track_id] = leanbot.to_dict()
+                print(f"[VIOLATION] Leanbot {track_id} collided with another tracked Leanbot")
+
+    previous_topdown_bboxes = current_boxes
+    return leanbot_data
+
+
 # ==========================================
 # TOPDOWN HANDLER
 # ==========================================
@@ -480,6 +546,7 @@ def handle_topdown(identity, payload):
 
     global leanbot_data
     global topdown_positions
+    global topdown_bboxes
     global topdown_snapshot_index
 
     topdown_snapshot_index += 1
@@ -499,13 +566,18 @@ def handle_topdown(identity, payload):
             str(key): value
             for key, value in incoming_data["positions"].items()
         }
+        topdown_bboxes = {
+            str(key): value for key, value in incoming_data.get("bboxes", {}).items()
+        }
 
     else:
 
         print("[WARNING] Legacy TOPDOWN payload received")
 
         leanbot_data = incoming_data
+        topdown_bboxes = {}
 
+    leanbot_data = detect_vehicle_collisions(leanbot_data, topdown_bboxes)
     published_leanbots = []
 
     for key, leanbot in leanbot_data.items():
@@ -557,7 +629,13 @@ def handle_topdown(identity, payload):
     # Return canonical state to TOPDOWN.
     socket.send_multipart([
         identity,
-        json.dumps(leanbot_data).encode("utf-8")
+        json.dumps({
+            "leanbots": leanbot_data,
+            "traffic_states": {
+                checker_id: state.name
+                for checker_id, state in traffic_states.items()
+            },
+        }).encode("utf-8")
     ])
 
 

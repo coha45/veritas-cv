@@ -33,6 +33,8 @@ parser.add_argument("-m", "--model")
 parser.add_argument("-s", "--source")
 parser.add_argument("-rs", "--road_sections_path")
 parser.add_argument("--camera_type")
+parser.add_argument("--traffic_checkers_path", default="./traffic_checkers.json")
+parser.add_argument("--speed-limit-cm-s", type=float, default=30.0)
 
 args = parser.parse_args()
 
@@ -86,6 +88,8 @@ elif args.mode == "run":
 
     UPDATE_INTERVAL = 15
     CONFIDENCE_THRESHOLD = 0.4
+    PEDESTRIAN_LANE_CONFIDENCE = 0.4
+    PEDESTRIAN_RESTRICTED_CONFIDENCE = 0.7
 
     # IMPORTANT: Change this to the exact class name in your YOLO model.
     LICENSE_PLATE_CLASS = "Plate"
@@ -115,6 +119,19 @@ elif args.mode == "run":
     source = args.source
     warp_matrix_path = args.warp_matrix_path
     road_sections = args.road_sections_path
+    traffic_zone_states = {}
+    if camera_type == "TOPDOWN":
+        try:
+            with open(args.traffic_checkers_path, "r", encoding="utf-8") as checker_file:
+                checker_config = json.load(checker_file) if os.path.getsize(args.traffic_checkers_path) else {}
+            traffic_zone_states = {
+                zone_name: (checker["id"], checker["label"])
+                for checker in checker_config.get("checkers", [])
+                for zone_name in checker.get("approach_zones", [])
+            }
+        except (OSError, json.JSONDecodeError) as error:
+            raise RuntimeError(f"Could not load traffic checker configuration: {error}") from error
+    traffic_states = {}
 
     # Camera
     cap = open_camera(capture_device)
@@ -206,6 +223,7 @@ elif args.mode == "run":
 
             # TOPDOWN ground positions for broker association
             topdown_positions = {}
+            topdown_bboxes = {}
 
             results = model.track(
                 detection_frame,
@@ -234,7 +252,7 @@ elif args.mode == "run":
 
                     conf = float(box.conf[0])
 
-                    if conf <= CONFIDENCE_THRESHOLD:
+                    if conf < CONFIDENCE_THRESHOLD:
                         continue
 
                     x1, y1, x2, y2 = map(
@@ -256,6 +274,20 @@ elif args.mode == "run":
 
                     cls = int(box.cls[0])
                     class_name = class_names[cls]
+
+                    if camera_type == "TOPDOWN" and class_name == "Pedestrian":
+                        in_restricted_zone = any(
+                            zone.type == ZoneType.RESTRICTED and zone.point_overlaps(centroid)
+                            for zone in zones
+                        )
+                        in_pedestrian_lane = any(
+                            zone.name == "pedestrian_lane" and zone.point_overlaps(centroid)
+                            for zone in zones
+                        )
+                        if in_restricted_zone and conf < PEDESTRIAN_RESTRICTED_CONFIDENCE:
+                            continue
+                        if in_pedestrian_lane and conf < PEDESTRIAN_LANE_CONFIDENCE:
+                            continue
 
                     # Camera-specific class filtering
                     if (
@@ -404,6 +436,7 @@ elif args.mode == "run":
                             float(x),
                             float(y)
                         ]
+                        topdown_bboxes[str(track_id)] = [x1, y1, x2, y2]
 
                         if len(cur_leanbot.violations) >= 1:
                             colour = (0, 0, 255)
@@ -419,6 +452,16 @@ elif args.mode == "run":
 
                         # Velocity
                         speed, _ = cur_leanbot.get_velocity_vector()
+
+                        if speed > args.speed_limit_cm_s:
+                            if ViolationType.SPEEDING.name not in cur_leanbot.violations:
+                                print(
+                                    f"[VIOLATION] Leanbot {track_id} speeding: "
+                                    f"{speed:.1f} cm/s > {args.speed_limit_cm_s:.1f} cm/s",
+                                    flush=True,
+                                )
+                            cur_leanbot.add_violation(ViolationType.SPEEDING.name)
+                            colour = (0, 0, 255)
 
                         angle = cur_leanbot.get_avg_angle_in_radians()
 
@@ -546,12 +589,23 @@ elif args.mode == "run":
                     )
 
                     color = zone.color
+                    signal = traffic_zone_states.get(zone.name)
+                    zone_label = zone.name
+                    if signal:
+                        checker_id, checker_label = signal
+                        state = traffic_states.get(checker_id, "RED")
+                        color = (40, 40, 245) if state == "RED" else (55, 205, 115)
+                        zone_label = f"{zone.name} | {checker_label}: {state}"
+
+                        overlay = top_down.copy()
+                        cv.rectangle(overlay, p1, p2, color, thickness=-1)
+                        cv.addWeighted(overlay, 0.16, top_down, 0.84, 0, top_down)
 
                     top_down = draw_center_text(
                         top_down,
                         p1,
                         p2,
-                        zone.name,
+                        zone_label,
                         cv.FONT_HERSHEY_SIMPLEX,
                         0.5,
                         1,
@@ -602,10 +656,15 @@ elif args.mode == "run":
 
                 socket.send_json({
                     "leanbots": leanbot_dict,
-                    "positions": topdown_positions
+                    "positions": topdown_positions,
+                    "bboxes": topdown_bboxes
                 })
 
                 updated_leanbot_dict = socket.recv_json()
+
+                if isinstance(updated_leanbot_dict, dict) and "leanbots" in updated_leanbot_dict:
+                    traffic_states = updated_leanbot_dict.get("traffic_states", traffic_states)
+                    updated_leanbot_dict = updated_leanbot_dict["leanbots"]
 
                 for key, data in updated_leanbot_dict.items():
 

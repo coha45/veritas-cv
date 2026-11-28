@@ -20,7 +20,6 @@ const Dashboard = () => {
     trafficCheckers,
     intersectionZone,
     connected,
-    frames,
     footSnapshot,
     setTrafficState
   } = useVeritas()
@@ -68,7 +67,7 @@ const Dashboard = () => {
           <div>
             <h2 className="text-xl font-bold text-slate-900">Road signal controls</h2>
             <p className="text-sm text-slate-500">
-              Each controller covers its two approach lanes and checks entry into {intersectionZone ?? 'the intersection'}.
+              Road signals cover their mapped lanes and check entry into {intersectionZone ?? 'the intersection'}; the crossing signal covers its pedestrian zone.
             </p>
           </div>
           <div className="grid grid-cols-1 gap-3 lg:grid-cols-3">
@@ -143,7 +142,7 @@ const Dashboard = () => {
               Latest FOOT associations: {Object.keys(matches).length}
             </p>
           </div>
-          <CameraFeed frames={frames} />
+          <CameraFeed />
         </section>
 
         <LeanbotTable data={leanbots} matches={matches} />

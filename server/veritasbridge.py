@@ -4,14 +4,19 @@ import ipaddress
 import threading
 import zmq
 import json
+import numpy as np
+from fractions import Fraction
 from pathlib import Path
 
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 import uvicorn
-from database import initialize, list_records, save_approved
+import av
+import cv2 as cv
+from aiortc import RTCPeerConnection, RTCSessionDescription, VideoStreamTrack
+from database import append_approved_violations, get_plate_image, initialize, list_records, save_approved, update_plate
 
 
 # ==========================================
@@ -34,6 +39,35 @@ main_loop = None
 shutdown_event = threading.Event()
 
 broadcast_lock = None
+latest_camera_frames = {"TOPDOWN": None, "FOOT": None}
+camera_frame_events = {}
+peer_connections = set()
+live_violation_signatures = {}
+
+
+class CameraVideoTrack(VideoStreamTrack):
+    """Serve fresh frames only, preventing encoder backlog when inference is slow."""
+    def __init__(self, camera_id):
+        super().__init__()
+        self.camera_id = camera_id
+        self.frame_number = 0
+        self.started_at = None
+
+    async def recv(self):
+        event = camera_frame_events[self.camera_id]
+        await event.wait()
+        event.clear()
+        image = latest_camera_frames.get(self.camera_id)
+        if image is None:
+            return await self.recv()
+        now = asyncio.get_running_loop().time()
+        if self.started_at is None:
+            self.started_at = now
+        self.frame_number += 1
+        frame = av.VideoFrame.from_ndarray(image, format="bgr24")
+        frame.pts = int((now - self.started_at) * 90000)
+        frame.time_base = Fraction(1, 90000)
+        return frame
 
 
 # ==========================================
@@ -126,6 +160,27 @@ def zmq_listener(loop):
             if len(parts) == 1:
 
                 message = json.loads(parts[0])
+                if message.get("type") == "state_snapshot":
+                    live_leanbots = message.get("leanbots", [])
+                    changed_leanbots = []
+                    active_ids = set()
+                    if isinstance(live_leanbots, list):
+                        for bot in live_leanbots:
+                            if not isinstance(bot, dict) or bot.get("id") is None:
+                                continue
+                            leanbot_id = str(bot["id"])
+                            active_ids.add(leanbot_id)
+                            signature = json.dumps(bot.get("violations") or [], sort_keys=True)
+                            if live_violation_signatures.get(leanbot_id) != signature:
+                                live_violation_signatures[leanbot_id] = signature
+                                changed_leanbots.append(bot)
+                    for stale_id in set(live_violation_signatures) - active_ids:
+                        del live_violation_signatures[stale_id]
+                    if changed_leanbots:
+                        try:
+                            append_approved_violations(changed_leanbots)
+                        except Exception as error:
+                            print("[DATABASE] Could not append live violations:", repr(error))
                 future = asyncio.run_coroutine_threadsafe(
                     broadcast(message),
                     loop
@@ -142,13 +197,17 @@ def zmq_listener(loop):
                 if topic != b"frame":
                     continue
 
-                future = asyncio.run_coroutine_threadsafe(
-                    broadcast_frame(
-                        camera_id.decode("utf-8"),
-                        frame_bytes
-                    ),
-                    loop
-                )
+                camera_name = camera_id.decode("utf-8")
+                if camera_name in latest_camera_frames:
+                    decoded = cv.imdecode(
+                        np.frombuffer(frame_bytes, dtype=np.uint8), cv.IMREAD_COLOR
+                    )
+                    if decoded is not None:
+                        latest_camera_frames[camera_name] = decoded
+                        event = camera_frame_events.get(camera_name)
+                        if event is not None:
+                            loop.call_soon_threadsafe(event.set)
+                continue
 
             else:
 
@@ -191,6 +250,8 @@ async def lifespan(app: FastAPI):
 
     broadcast_lock = asyncio.Lock()
     initialize()
+    camera_frame_events.clear()
+    camera_frame_events.update({camera_id: asyncio.Event() for camera_id in latest_camera_frames})
 
     shutdown_event.clear()
 
@@ -208,6 +269,9 @@ async def lifespan(app: FastAPI):
 
     shutdown_event.set()
 
+    await asyncio.gather(*(pc.close() for pc in list(peer_connections)), return_exceptions=True)
+    peer_connections.clear()
+
     listener_thread.join(timeout=2)
 
     context.term()
@@ -222,8 +286,8 @@ app.add_middleware(
         "http://127.0.0.1:5173",
         "http://localhost:5173",
     ],
-    allow_origin_regex=r"^http://(127\.0\.0\.1|localhost):[0-9]+$",
-    allow_methods=["POST"],
+    allow_origin_regex=r"^http://(127\.0\.0\.1|localhost|10(?:\.\d{1,3}){3}|192\.168(?:\.\d{1,3}){2}|172\.(?:1[6-9]|2\d|3[01])(?:\.\d{1,3}){2}):[0-9]+$",
+    allow_methods=["GET", "POST", "PATCH"],
     allow_headers=["Content-Type"],
 )
 
@@ -240,6 +304,67 @@ app.mount(
 @app.get("/api/database/leanbots")
 async def get_leanbot_records():
     return {"records": list_records()}
+
+
+@app.get("/api/database/leanbots/{leanbot_id}/plate-image")
+async def get_leanbot_plate_image(leanbot_id: str):
+    image = get_plate_image(leanbot_id)
+    if image is None:
+        raise HTTPException(status_code=404, detail="No plate image is stored for this Leanbot")
+    image_bytes, media_type = image
+    return Response(
+        content=image_bytes,
+        media_type=media_type,
+        headers={"Cache-Control": "public, max-age=3600"},
+    )
+
+
+@app.patch("/api/database/leanbots/{leanbot_id}/plate")
+async def edit_leanbot_plate(leanbot_id: str, request: Request):
+    try:
+        body = await request.json()
+    except Exception as error:
+        raise HTTPException(status_code=400, detail="Expected JSON with license_plate") from error
+    plate = body.get("license_plate") if isinstance(body, dict) else None
+    if not isinstance(plate, str):
+        raise HTTPException(status_code=400, detail="license_plate must be text")
+    plate = plate.strip()
+    if len(plate) > 32:
+        raise HTTPException(status_code=400, detail="Plate text must be 32 characters or fewer")
+    saved_plate = plate or None
+    updated = await asyncio.to_thread(update_plate, leanbot_id, saved_plate)
+    if not updated:
+        raise HTTPException(status_code=404, detail="Approved Leanbot record not found")
+    return {"ok": True, "leanbot_id": leanbot_id, "license_plate": saved_plate}
+
+
+@app.post("/api/webrtc/offer")
+async def webrtc_offer(request: Request):
+    try:
+        body = await request.json()
+        camera_id = body.get("camera_id")
+        if camera_id not in latest_camera_frames or not body.get("sdp") or not body.get("type"):
+            raise ValueError("camera_id, sdp, and type are required")
+        pc = RTCPeerConnection()
+        peer_connections.add(pc)
+
+        @pc.on("connectionstatechange")
+        async def on_connection_state_change():
+            if pc.connectionState in {"failed", "closed"}:
+                peer_connections.discard(pc)
+            if pc.connectionState == "failed":
+                await pc.close()
+
+        await pc.setRemoteDescription(RTCSessionDescription(sdp=body["sdp"], type=body["type"]))
+        pc.addTrack(CameraVideoTrack(camera_id))
+        answer = await pc.createAnswer()
+        await pc.setLocalDescription(answer)
+        deadline = asyncio.get_running_loop().time() + 8
+        while pc.iceGatheringState != "complete" and asyncio.get_running_loop().time() < deadline:
+            await asyncio.sleep(0.05)
+        return {"sdp": pc.localDescription.sdp, "type": pc.localDescription.type}
+    except (ValueError, KeyError) as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
 
 @app.post("/api/database/leanbots/{leanbot_id}/approval")
 async def update_leanbot_approval(leanbot_id: str, request: Request):

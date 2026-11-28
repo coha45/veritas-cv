@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Page from './Page'
 import { useVeritas } from '../context/VeritasContext'
 
@@ -43,6 +43,74 @@ function DecisionBadge({ decision }) {
       {decision ?? 'Pending'}
     </span>
   )
+}
+
+function PlateEditor({ record, onSave }) {
+  const originalValue = typeof record.plate === 'string'
+    ? record.plate
+    : typeof record.license_plate === 'string'
+      ? record.license_plate
+      : ''
+  const [value, setValue] = useState(originalValue)
+  const [saving, setSaving] = useState(false)
+  const [message, setMessage] = useState('')
+
+  useEffect(() => {
+    setValue(originalValue)
+    setMessage('')
+  }, [originalValue])
+
+  const save = async () => {
+    setSaving(true)
+    setMessage('')
+    try {
+      await onSave(record.leanbot_id ?? record.id, value)
+      setMessage('Saved')
+    } catch (error) {
+      setMessage(error.message || 'Could not save plate')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="flex min-w-44 flex-col gap-1">
+      <div className="flex items-center gap-2">
+        <input
+          type="text"
+          maxLength={32}
+          value={value}
+          onChange={event => { setValue(event.target.value); setMessage('') }}
+          aria-label={`Plate number for Leanbot ${record.leanbot_id ?? record.id}`}
+          placeholder="Enter plate"
+          className="input input-bordered input-sm w-32"
+        />
+        <button
+          type="button"
+          className="btn btn-sm btn-outline"
+          onClick={save}
+          disabled={saving || value === originalValue}
+        >
+          {saving ? 'Saving…' : 'Save'}
+        </button>
+      </div>
+      {message && <span className={`text-xs ${message === 'Saved' ? 'text-emerald-700' : 'text-rose-700'}`} role="status">{message}</span>}
+    </div>
+  )
+}
+
+function getRecordViolations(record) {
+  const value = record.violations ?? record.violations_json
+  if (Array.isArray(value)) return value
+  if (typeof value === 'string') {
+    try {
+      const parsed = JSON.parse(value)
+      return Array.isArray(parsed) ? parsed : []
+    } catch {
+      return []
+    }
+  }
+  return []
 }
 
 function ApprovalQueue({ leanbots, decisions, onDecision }) {
@@ -121,7 +189,7 @@ function ApprovalQueue({ leanbots, decisions, onDecision }) {
   )
 }
 
-function DatabaseRecords({ records, loading, error, onRefresh }) {
+function DatabaseRecords({ records, loading, error, onRefresh, onSavePlate }) {
   return (
     <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
       <div className="flex flex-col gap-2 border-b border-slate-100 p-5 sm:flex-row sm:items-center sm:justify-between">
@@ -138,11 +206,13 @@ function DatabaseRecords({ records, loading, error, onRefresh }) {
       </div>
       {error && <p role="alert" className="px-5 pt-4 text-sm text-rose-700">{error}</p>}
       <div className="overflow-x-auto">
-        <table className="w-full min-w-[680px] border-collapse text-left text-sm">
+        <table className="w-full min-w-[980px] border-collapse text-left text-sm">
           <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
             <tr>
               <th className="px-4 py-3 font-semibold">Leanbot ID</th>
-              <th className="px-4 py-3 font-semibold">Plate</th>
+              <th className="px-4 py-3 font-semibold">Plate number (editable)</th>
+              <th className="px-4 py-3 font-semibold">Plate image</th>
+              <th className="px-4 py-3 font-semibold">Detected violations</th>
               <th className="px-4 py-3 font-semibold">Last zone</th>
               <th className="px-4 py-3 font-semibold">Approval</th>
               <th className="px-4 py-3 font-semibold">Last seen</th>
@@ -152,13 +222,37 @@ function DatabaseRecords({ records, loading, error, onRefresh }) {
             {records.length ? records.map((record, index) => (
               <tr key={record.id ?? record.leanbot_id ?? index}>
                 <td className="px-4 py-4 font-semibold">{record.leanbot_id ?? record.id ?? '—'}</td>
-                <td className="px-4 py-4">{record.plate ?? record.license_plate ?? '—'}</td>
+                <td className="px-4 py-4">
+                  <PlateEditor record={record} onSave={onSavePlate} />
+                </td>
+                <td className="px-4 py-3">
+                  <EvidencePreview
+                    capture={record.evidence_url ? { image_url: record.evidence_url } : null}
+                    leanbotId={record.leanbot_id ?? record.id}
+                  />
+                </td>
+                <td className="px-4 py-4">
+                  {getRecordViolations(record).length ? (
+                    <div className="flex max-w-64 flex-wrap gap-1.5">
+                      {getRecordViolations(record).map((violation, violationIndex) => {
+                        const label = typeof violation === 'string'
+                          ? violation
+                          : violation?.type ?? violation?.name ?? String(violation)
+                        return (
+                          <span key={`${label}-${violationIndex}`} className="rounded-full bg-rose-50 px-2.5 py-1 text-xs font-semibold text-rose-700">
+                            {String(label).replaceAll('_', ' ')}
+                          </span>
+                        )
+                      })}
+                    </div>
+                  ) : <span className="text-slate-400">None</span>}
+                </td>
                 <td className="px-4 py-4">{record.last_zone ?? record.zone ?? '—'}</td>
                 <td className="px-4 py-4">{record.approval ?? record.status ?? '—'}</td>
                 <td className="px-4 py-4">{record.last_seen ?? record.timestamp ?? '—'}</td>
               </tr>
             )) : (
-              <tr><td colSpan={5} className="px-4 py-12 text-center text-slate-500">
+              <tr><td colSpan={7} className="px-4 py-12 text-center text-slate-500">
                 {loading ? 'Loading database records…' : 'No database records returned.'}
               </td></tr>
             )}
@@ -176,6 +270,7 @@ export default function Database() {
   const [records, setRecords] = useState([])
   const [recordsLoading, setRecordsLoading] = useState(false)
   const [recordsError, setRecordsError] = useState('')
+  const lastApprovedViolationSignature = useRef(null)
 
   useEffect(() => {
     let active = true
@@ -198,7 +293,7 @@ export default function Database() {
     return () => { active = false }
   }, [])
 
-  const loadRecords = async () => {
+  const loadRecords = useCallback(async () => {
     setRecordsLoading(true)
     setRecordsError('')
     try {
@@ -211,7 +306,29 @@ export default function Database() {
     } finally {
       setRecordsLoading(false)
     }
-  }
+  }, [])
+
+  useEffect(() => {
+    if (activeView !== 'records') return
+    const plateApprovedIds = new Set(
+      records
+        .filter(record => typeof record.plate === 'string' && record.plate.trim())
+        .map(record => String(record.leanbot_id ?? record.id))
+    )
+    const signature = JSON.stringify(
+      leanbots
+        .filter(bot => decisions[String(bot.id)] === 'approved' && plateApprovedIds.has(String(bot.id)))
+        .map(bot => [String(bot.id), Array.isArray(bot.violations) ? bot.violations : []])
+    )
+    if (lastApprovedViolationSignature.current === null) {
+      lastApprovedViolationSignature.current = signature
+      return
+    }
+    if (signature !== lastApprovedViolationSignature.current) {
+      lastApprovedViolationSignature.current = signature
+      void loadRecords()
+    }
+  }, [activeView, decisions, leanbots, records, loadRecords])
 
   const decisionCounts = useMemo(() => {
     const values = Object.values(decisions)
@@ -236,16 +353,31 @@ export default function Database() {
       })
       const result = await response.json()
       if (!response.ok) throw new Error(result.detail || 'Approval update failed')
-    setDecisions(previous => {
-      const next = { ...previous }
-      if (decision) next[id] = decision
-      else delete next[id]
-      return next
-    })
-      if (activeView === 'records') await loadRecords()
+      setDecisions(previous => {
+        const next = { ...previous }
+        if (decision) next[id] = decision
+        else delete next[id]
+        return next
+      })
+      if (decision === 'approved') await loadRecords()
     } catch (error) {
       setRecordsError(error.message)
     }
+  }
+
+  const savePlate = async (id, plate) => {
+    const response = await fetch(`${apiOrigin}/api/database/leanbots/${encodeURIComponent(id)}/plate`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ license_plate: plate }),
+    })
+    const result = await response.json()
+    if (!response.ok) throw new Error(result.detail || 'Could not save plate number')
+    setRecords(previous => previous.map(record => (
+      String(record.leanbot_id ?? record.id) === String(id)
+        ? { ...record, plate: result.license_plate ?? '' }
+        : record
+    )))
   }
 
   return (
@@ -278,7 +410,7 @@ export default function Database() {
             role="tab"
             aria-selected={activeView === 'records'}
             className={`tab ${activeView === 'records' ? 'tab-active bg-white shadow-sm' : ''}`}
-            onClick={() => setActiveView('records')}
+            onClick={() => { setActiveView('records'); void loadRecords() }}
           >
             Database records
           </button>
@@ -299,7 +431,7 @@ export default function Database() {
             <ApprovalQueue leanbots={pendingLeanbots} decisions={decisions} onDecision={setDecision} />
           </section>
         ) : (
-          <DatabaseRecords records={records} loading={recordsLoading} error={recordsError} onRefresh={loadRecords} />
+          <DatabaseRecords records={records} loading={recordsLoading} error={recordsError} onRefresh={loadRecords} onSavePlate={savePlate} />
         )}
       </div>
     </Page>

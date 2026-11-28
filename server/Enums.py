@@ -18,4 +18,5 @@ class ViolationType(Enum):
     RUNNING_RED_LIGHT = auto()
     BLOCKING_ROAD = auto()
     RESTRICTED_AREA = auto() 
+    VEHICLE_COLLISION = auto()
 

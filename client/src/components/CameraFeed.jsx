@@ -1,9 +1,9 @@
 import Camera from './Camera'
 
-const CameraFeed = ({ frames = {} }) => (
+const CameraFeed = () => (
   <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-    <Camera cameraId="TOPDOWN" frames={frames} />
-    <Camera cameraId="FOOT" frames={frames} />
+    <Camera cameraId="TOPDOWN" />
+    <Camera cameraId="FOOT" />
   </div>
 )
 

@@ -14,7 +14,7 @@ const navLinks = [
   },
   {
     title: 'Top-Down View',
-    url: '/top-down',
+    url: '/topdown',
     icon: <FaRegEye aria-hidden="true" />,
   },
   {

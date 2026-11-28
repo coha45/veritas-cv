@@ -73,7 +73,7 @@ export function VeritasProvider({ children }) {
 
             setLeanbots(Array.isArray(message.leanbots) ? message.leanbots : []);
             setTrafficStates(message.traffic_states ?? {});
-            if (message.traffic_checkers?.length) {
+            if (Array.isArray(message.traffic_checkers)) {
               setTrafficCheckers(message.traffic_checkers);
             }
             if (message.intersection_zone) {
@@ -88,7 +88,7 @@ export function VeritasProvider({ children }) {
 
           else if (message.type === "traffic_state") {
             setTrafficStates(message.traffic_states ?? {});
-            if (message.traffic_checkers?.length) {
+            if (Array.isArray(message.traffic_checkers)) {
               setTrafficCheckers(message.traffic_checkers);
             }
             if (message.intersection_zone) {
